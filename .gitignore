@@ -1,0 +1,57 @@
+# -----------------------------
+# Entorno virtual
+# -----------------------------
+venv/
+ENV/
+env/
+.env/
+
+# -----------------------------
+# Archivos compilados de Python
+# -----------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+
+# -----------------------------
+# Configuración de IDEs y editores
+# -----------------------------
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# -----------------------------
+# Archivos de sistema y temporales
+# -----------------------------
+*.swp
+*.bak
+*.tmp
+*.log
+
+# Linux
+*~
+.DS_Store  # aunque esto es macOS, no molesta en Linux
+
+# -----------------------------
+# Archivos de pruebas, cobertura y pip
+# -----------------------------
+.coverage
+htmlcov/
+.tox/
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+.pytest_cache/
+
+# -----------------------------
+# Dependencias
+# -----------------------------
+pip-log.txt
+pip-delete-this-directory.txt
+
+# -----------------------------
+# Configuración local de Python
+# -----------------------------
+*.env
