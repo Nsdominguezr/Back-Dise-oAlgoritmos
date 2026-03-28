@@ -23,4 +23,4 @@ if __name__ == '__main__':
     for svc, url in app.config['MICROSERVICIOS'].items():
         print(f" - /api/{svc} -> {url}")
         
-    app.run(host='0.0.0.0', port=app.config['PORT'], debug=True)
+    app.run(host='0.0.0.0', port=app.config['PORT'], debug=True, ssl_context='adhoc')
