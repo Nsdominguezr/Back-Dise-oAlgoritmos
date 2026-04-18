@@ -147,13 +147,16 @@ def login():
     password_valida = bcrypt.checkpw(password_ingresada, password_guardada)
     
     if password_valida:
+        # Calculamos la fecha de expiración para usarla en el payload y en el JSON de respuesta
+        fecha_expiracion = datetime.datetime.utcnow() + datetime.timedelta(minutes=2)
+        
         # 4. Construir el Payload (cuerpo) del JWT con la información de la sesión
         token_payload = {
             'user_id': usuario.id,
             'rol': usuario.rol.nombre, # Extraemos el nombre del rol gracias a la relación en el modelo
             'sede_id': usuario.sede_id,
             # Definimos la expiración del token (ej. 8 horas a partir de su creación)
-            'exp': datetime.datetime.utcnow() + datetime.timedelta(hours=8) 
+            'exp': fecha_expiracion 
         }
         
         # 5. Firmar criptográficamente el token con el algoritmo HS256 y la SECRET_KEY
@@ -163,6 +166,7 @@ def login():
         return jsonify({
             'mensaje': 'Login exitoso',
             'token': token,
+            'expira_en': fecha_expiracion.isoformat() + 'Z',
             'usuario': usuario_dto.dump(usuario)
         }), 200
         
