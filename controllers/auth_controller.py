@@ -148,7 +148,7 @@ def login():
     
     if password_valida:
         # --- GENERACIÓN DE ACCESS TOKEN (Vida corta para pruebas) ---
-        fecha_expiracion_access = datetime.datetime.utcnow() + datetime.timedelta(minutes=2)
+        fecha_expiracion_access = datetime.datetime.utcnow() + datetime.timedelta(minutes=20)
         
         # 4. Construir el Payload (cuerpo) del JWT con la información de la sesión
         token_payload = {
@@ -210,7 +210,7 @@ def refresh():
             return jsonify({'mensaje': 'Usuario no encontrado.'}), 401
             
         # 4. Generar nuevo Access Token (otros 2 minutos para seguir probando)
-        nueva_fecha_exp = datetime.datetime.utcnow() + datetime.timedelta(minutes=2)
+        nueva_fecha_exp = datetime.datetime.utcnow() + datetime.timedelta(minutes=20)
         nuevo_payload = {
             'user_id': usuario.id,
             'rol': usuario.rol.nombre,
