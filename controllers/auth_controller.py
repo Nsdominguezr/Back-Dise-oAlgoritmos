@@ -147,29 +147,86 @@ def login():
     password_valida = bcrypt.checkpw(password_ingresada, password_guardada)
     
     if password_valida:
-        # Calculamos la fecha de expiración para usarla en el payload y en el JSON de respuesta
-        fecha_expiracion = datetime.datetime.utcnow() + datetime.timedelta(minutes=2)
+        # --- GENERACIÓN DE ACCESS TOKEN (Vida corta para pruebas) ---
+        fecha_expiracion_access = datetime.datetime.utcnow() + datetime.timedelta(minutes=2)
         
         # 4. Construir el Payload (cuerpo) del JWT con la información de la sesión
         token_payload = {
             'user_id': usuario.id,
             'rol': usuario.rol.nombre, # Extraemos el nombre del rol gracias a la relación en el modelo
             'sede_id': usuario.sede_id,
-            # Definimos la expiración del token (ej. 8 horas a partir de su creación)
-            'exp': fecha_expiracion 
+            'exp': fecha_expiracion_access 
         }
         
-        # 5. Firmar criptográficamente el token con el algoritmo HS256 y la SECRET_KEY
-        token = jwt.encode(token_payload, current_app.config['SECRET_KEY'], algorithm='HS256')
+        # 5. Firmar criptográficamente el Access Token
+        access_token = jwt.encode(token_payload, current_app.config['SECRET_KEY'], algorithm='HS256')
 
-        # 6. Retornar el token y los datos limpios del usuario al frontend
+        # --- GENERACIÓN DE REFRESH TOKEN (Vida larga: 7 días) ---
+        fecha_expiracion_refresh = datetime.datetime.utcnow() + datetime.timedelta(days=7)
+        refresh_payload = {
+            'user_id': usuario.id,
+            'type': 'refresh', # Etiqueta para diferenciarlo del access token
+            'exp': fecha_expiracion_refresh
+        }
+        refresh_token = jwt.encode(refresh_payload, current_app.config['SECRET_KEY'], algorithm='HS256')
+
+        # 6. Retornar los tokens y los datos limpios del usuario al frontend
         return jsonify({
             'mensaje': 'Login exitoso',
-            'token': token,
-            'expira_en': fecha_expiracion.isoformat() + 'Z',
+            'token': access_token,
+            'refresh_token': refresh_token,
+            'expira_en': fecha_expiracion_access.isoformat() + 'Z',
             'usuario': usuario_dto.dump(usuario)
         }), 200
         
     else:
         # Si la contraseña no coincide, devolvemos error 401 de forma genérica por seguridad
         return jsonify({'mensaje': 'Usuario o contraseña incorrectos'}), 401
+
+
+@auth_bp.route('/refresh', methods=['POST'])
+def refresh():
+    """
+    Endpoint para renovar el Access Token usando un Refresh Token válido.
+    """
+    data = request.get_json()
+    
+    if not data or not data.get('refresh_token'):
+        return jsonify({'mensaje': 'Se requiere el refresh_token'}), 400
+
+    refresh_token_recibido = data.get('refresh_token')
+
+    try:
+        # 1. Desencriptar el Refresh Token
+        payload = jwt.decode(refresh_token_recibido, current_app.config['SECRET_KEY'], algorithms=["HS256"])
+        
+        # 2. Validar que sea un token de tipo 'refresh'
+        if payload.get('type') != 'refresh':
+            return jsonify({'mensaje': 'Token inválido para renovación.'}), 401
+            
+        # 3. Verificar existencia del usuario
+        usuario = Usuario.query.get(payload['user_id'])
+        if not usuario:
+            return jsonify({'mensaje': 'Usuario no encontrado.'}), 401
+            
+        # 4. Generar nuevo Access Token (otros 2 minutos para seguir probando)
+        nueva_fecha_exp = datetime.datetime.utcnow() + datetime.timedelta(minutes=2)
+        nuevo_payload = {
+            'user_id': usuario.id,
+            'rol': usuario.rol.nombre,
+            'sede_id': usuario.sede_id,
+            'exp': nueva_fecha_exp 
+        }
+        nuevo_access_token = jwt.encode(nuevo_payload, current_app.config['SECRET_KEY'], algorithm='HS256')
+        
+        # 5. Retornar nueva llave de acceso
+        return jsonify({
+            'mensaje': 'Token renovado exitosamente',
+            'token': nuevo_access_token,
+            'expira_en': nueva_fecha_exp.isoformat() + 'Z'
+        }), 200
+        
+    except jwt.ExpiredSignatureError:
+        return jsonify({'mensaje': 'El Refresh Token ha expirado. Inicie sesión nuevamente.'}), 401
+    except jwt.InvalidTokenError:
+        return jsonify({'mensaje': 'Refresh Token inválido o corrupto.'}), 401
