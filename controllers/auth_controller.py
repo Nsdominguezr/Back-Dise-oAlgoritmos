@@ -61,17 +61,20 @@ def admin_global_required(f):
 # ==========================================
 
 @auth_bp.route('/usuarios', methods=['GET'])
+@admin_global_required # <-- NUEVO: Ahora esta ruta está protegida. Solo el Admin Global puede listar usuarios.
 def get_usuarios():
     """
-    Endpoint para obtener la lista de todos los usuarios registrados.
+    Endpoint protegido para obtener la lista de todos los usuarios registrados.
+    Requiere un JWT válido de un Administrador Global en los encabezados.
     """
-    # 1. Consultar todos los registros usando el ORM SQLAlchemy
+    # 1. Lógica del Modelo: Consultar todos los registros usando el ORM SQLAlchemy
     usuarios = Usuario.query.all()
     
-    # 2. Usar el DTO para serializar los objetos a JSON, 
-    # asegurando que el 'password_hash' quede excluido por seguridad.
+    # 2. Lógica DTO: Serializar los objetos a JSON.
+    # El DTO se encarga de que la respuesta sea segura y no incluya contraseñas.
     resultado = usuarios_dto.dump(usuarios)
     
+    # 3. Respuesta del Controlador con los datos serializados
     return jsonify(resultado), 200
 
 
