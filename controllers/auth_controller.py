@@ -1,5 +1,5 @@
 from flask import Blueprint, request, jsonify, current_app
-from models.user_model import db, Usuario
+from models.user_model import db, Usuario, Rol # <-- 1. Agrega 'Rol' a la importación
 from dto.user_dto import usuario_dto, usuarios_dto
 import bcrypt
 import jwt
@@ -24,6 +24,12 @@ def registrar_usuario():
     # Validaciones básicas
     if not data or not data.get('username') or not data.get('password') or not data.get('rol_id') or not data.get('sede_id'):
         return jsonify({'mensaje': 'Faltan datos obligatorios'}), 400
+
+    # <-- 2. NUEVA VALIDACIÓN HU-005: Verificar existencia del rol
+    rol_existente = Rol.query.get(data['rol_id'])
+    if not rol_existente:
+        return jsonify({'mensaje': 'Rol inválido. Asigne un rol permitido (1: Admin Global, 2: Admin Local, 3: Cajero, 4: Mesero)'}), 400
+    # ----------------------------------------------------
 
     # Hashing de contraseña (Requerimiento de seguridad)
     hashed_pw = bcrypt.hashpw(data['password'].encode('utf-8'), bcrypt.gensalt())
