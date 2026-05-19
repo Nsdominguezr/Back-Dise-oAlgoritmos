@@ -1,0 +1,21 @@
+# Framework base
+Flask==3.0.3
+
+# Base de datos y ORM (MySQL conector nativo)
+Flask-SQLAlchemy==3.1.1
+PyMySQL==1.1.0
+
+# DTOs y Serialización (Versión 1.2.1 que corrige el error de 'pprint')
+flask-marshmallow==1.2.1
+marshmallow==3.21.1
+marshmallow-sqlalchemy==1.0.0
+
+# Seguridad y Autenticación (Lectura y desencriptación de JWT)
+bcrypt==4.1.2
+PyJWT==2.8.0
+
+# Variables de entorno
+python-dotenv==1.0.1
+
+# Peticiones HTTP (Por si se requiere comunicación directa entre servicios)
+requests==2.31.0
