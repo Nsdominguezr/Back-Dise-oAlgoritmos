@@ -1,19 +1,24 @@
-from flask_marshmallow import Marshmallow
-from models.catalog_model import Sede, Producto
+from flask import Blueprint, request, jsonify
+from models.catalog_model import db, Sede
+from dto.catalog_dto import sede_dto, sedes_dto
+from utils.auth_middleware import admin_global_required
 
-ma = Marshmallow()
+sedes_bp = Blueprint('sedes_bp', __name__, url_prefix='/api/sedes')
 
-class SedeDTO(ma.SQLAlchemyAutoSchema):
-    class Meta:
-        model = Sede
-        fields = ("id", "nombre", "direccion", "telefono")
+@sedes_bp.route('', methods=['GET'])
+def get_sedes():
+    sedes = Sede.query.all()
+    return jsonify(sedes_dto.dump(sedes)), 200
 
-class ProductoDTO(ma.SQLAlchemyAutoSchema):
-    class Meta:
-        model = Producto
-        fields = ("id", "nombre", "precio", "categoria", "activo")
-
-sede_dto = SedeDTO()
-sedes_dto = SedeDTO(many=True)
-producto_dto = ProductoDTO()
-productos_dto = ProductoDTO(many=True)
+@sedes_bp.route('', methods=['POST'])
+@admin_global_required # Solo Admin Global según HU-009
+def create_sede():
+    data = request.get_json()
+    nueva_sede = Sede(
+        nombre=data['nombre'], 
+        direccion=data.get('direccion'), 
+        telefono=data.get('telefono')
+    )
+    db.session.add(nueva_sede)
+    db.session.commit()
+    return jsonify(sede_dto.dump(nueva_sede)), 201

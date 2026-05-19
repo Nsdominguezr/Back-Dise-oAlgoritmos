@@ -1,25 +1,18 @@
-from flask import request, jsonify, current_app
-import jwt
-from functools import wraps
+from flask_sqlalchemy import SQLAlchemy
 
-def admin_global_required(f):
-    @wraps(f)
-    def decorated(*args, **kwargs):
-        token = None
-        if 'Authorization' in request.headers:
-            auth_header = request.headers['Authorization']
-            if auth_header.startswith('Bearer '):
-                token = auth_header.split(" ")[1]
+db = SQLAlchemy()
 
-        if not token:
-            return jsonify({'mensaje': 'Token faltante.'}), 401
+class Sede(db.Model):
+    __tablename__ = 'sedes'
+    id = db.Column(db.Integer, primary_key=True)
+    nombre = db.Column(db.String(100), nullable=False)
+    direccion = db.Column(db.String(150))
+    telefono = db.Column(db.String(20))
 
-        try:
-            data = jwt.decode(token, current_app.config['SECRET_KEY'], algorithms=["HS256"])
-            if data.get('rol') != 'Admin Global':
-                return jsonify({'mensaje': 'Requiere privilegios de Admin Global.'}), 403
-        except Exception as e:
-            return jsonify({'mensaje': 'Token inválido o expirado.'}), 401
-
-        return f(*args, **kwargs)
-    return decorated
+class Producto(db.Model):
+    __tablename__ = 'productos'
+    id = db.Column(db.Integer, primary_key=True)
+    nombre = db.Column(db.String(100), nullable=False)
+    precio = db.Column(db.Numeric(10, 2), nullable=False)
+    categoria = db.Column(db.String(50))
+    activo = db.Column(db.Boolean, default=True)
