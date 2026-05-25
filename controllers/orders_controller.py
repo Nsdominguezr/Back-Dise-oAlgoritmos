@@ -138,3 +138,33 @@ def get_pendientes_caja(sede_id):
             "fecha": p.fecha_creacion.strftime('%Y-%m-%d %H:%M:%S')
         })
     return jsonify(resultado), 200
+
+# ====================================================================
+# HU-032: HISTORIAL Y TRAZABILIDAD DE PAGOS (VISTA ADMIN)
+# ====================================================================
+@orders_bp.route('/pagos/historial/<int:sede_id>', methods=['GET'])
+def historial_pagos(sede_id):
+    """Devuelve el historial de todas las cuentas pagadas de una sede específica"""
+    
+    # Hacemos un JOIN de las 3 tablas: Pago -> Pedido -> Mesa
+    # Filtramos por sede_id y ordenamos del pago más reciente al más antiguo
+    resultados_db = db.session.query(Pago, Pedido, Mesa)\
+        .join(Pedido, Pago.pedido_id == Pedido.id)\
+        .join(Mesa, Pedido.mesa_id == Mesa.id)\
+        .filter(Mesa.sede_id == sede_id)\
+        .order_by(Pago.fecha_pago.desc())\
+        .all()
+    
+    historial = []
+    for pago, pedido, mesa in resultados_db:
+        historial.append({
+            "pago_id": pago.id,
+            "pedido_id": pedido.id,
+            "numero_mesa": mesa.numero_mesa,
+            "usuario_cajero_id": pedido.usuario_id, # ID de quien cobró/abrió la mesa
+            "medio_pago": pago.medio_pago,
+            "monto_cobrado": float(pago.monto_pagado), # Casteo a float para el JSON
+            "fecha_pago": pago.fecha_pago.strftime('%Y-%m-%d %H:%M:%S')
+        })
+        
+    return jsonify(historial), 200
