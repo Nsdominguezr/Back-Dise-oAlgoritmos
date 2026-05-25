@@ -18,7 +18,7 @@ class MovimientoInventario(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     inventario_id = db.Column(db.Integer, db.ForeignKey('inventario.id'), nullable=False)
     usuario_id = db.Column(db.Integer, nullable=False)
-    tipo_movimiento = db.Column(db.Enum('INGRESO', 'MERMA'), nullable=False)
+    tipo_movimiento = db.Column(db.Enum('INGRESO', 'MERMA', 'VENTA'), nullable=False)
     cantidad = db.Column(db.Integer, nullable=False)
     fecha = db.Column(db.DateTime, default=datetime.utcnow)
     observacion = db.Column(db.String(255))

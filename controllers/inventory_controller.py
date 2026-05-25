@@ -70,3 +70,45 @@ def registrar_movimiento():
     except Exception as e:
         db.session.rollback()
         return jsonify({'mensaje': 'Error en la transacción de inventario'}), 500
+    
+@inventory_bp.route('/descontar-venta', methods=['POST'])
+def descontar_venta():
+    """Endpoint interno: Descuenta el stock automáticamente al pagar una cuenta"""
+    data = request.get_json()
+    sede_id = data.get('sede_id')
+    usuario_id = data.get('usuario_id') # El cajero que cerró la cuenta
+    items = data.get('items') # Lista de diccionarios: [{'producto_id': 1, 'cantidad': 2}, ...]
+    
+    if not items or not sede_id:
+        return jsonify({'mensaje': 'Datos de venta incompletos'}), 400
+
+    try:
+        for item in items:
+            producto_id = item['producto_id']
+            cantidad_vendida = int(item['cantidad'])
+            
+            registro_stock = Inventario.query.filter_by(sede_id=sede_id, producto_id=producto_id).first()
+            
+            # Si el producto no existe o el stock bajó desde que se tomó el pedido
+            if not registro_stock or registro_stock.cantidad < cantidad_vendida:
+                return jsonify({'mensaje': f'Stock inconsistente para el producto {producto_id}. Venta detenida.'}), 400
+                
+            # 1. Descontar stock
+            registro_stock.cantidad -= cantidad_vendida
+            
+            # 2. Guardar historial de auditoría
+            nuevo_movimiento = MovimientoInventario(
+                inventario_id=registro_stock.id,
+                usuario_id=usuario_id,
+                tipo_movimiento='VENTA',
+                cantidad=cantidad_vendida,
+                observacion='Venta procesada en caja'
+            )
+            db.session.add(nuevo_movimiento)
+            
+        db.session.commit()
+        return jsonify({'mensaje': 'Stock descontado con éxito'}), 200
+        
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'mensaje': 'Error procesando el descuento de inventario'}), 500
