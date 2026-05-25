@@ -16,6 +16,7 @@ class Usuario(db.Model):
     rol_id = db.Column(db.Integer, db.ForeignKey('roles.id'), nullable=False)
     sede_id = db.Column(db.Integer, nullable=False)
     creado_en = db.Column(db.DateTime, default=datetime.utcnow)
+    activo = db.Column(db.Boolean, default=True) # <-- NUEVO CAMPO (HU-035)
 
     # Relación
     rol = db.relationship('Rol', backref='usuarios')
