@@ -9,6 +9,7 @@ class Mesa(db.Model):
     sede_id = db.Column(db.Integer, nullable=False)
     numero_mesa = db.Column(db.String(10), nullable=False)
     estado = db.Column(db.Enum('LIBRE', 'OCUPADA'), default='LIBRE')
+    activo = db.Column(db.Boolean, default=True) # <-- NUEVO CAMPO PARA SOFT DELETE
 
 class Pedido(db.Model):
     __tablename__ = 'pedidos'

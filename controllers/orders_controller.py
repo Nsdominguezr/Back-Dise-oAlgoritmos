@@ -7,11 +7,22 @@ orders_bp = Blueprint('orders_bp', __name__, url_prefix='/api/pedidos')
 
 # ----------------- FUNCIONES DEL MESERO (SPRINT 5) -----------------
 
+# HU-019 / HU-033: Obtener mesas ACTIVAS de una sede (Filtrado para ocultar eliminadas)
+@orders_bp.route('/mesas/<int:sede_id>', methods=['GET'])
+def get_mesas(sede_id):
+    # Trae solo las mesas que no han sido dadas de baja lógicamente
+    mesas = Mesa.query.filter_by(sede_id=sede_id, activo=True).all()
+    resultado = [{"id": m.id, "numero_mesa": m.numero_mesa, "estado": m.estado} for m in mesas]
+    return jsonify(resultado), 200
+
 @orders_bp.route('/abrir', methods=['POST'])
 def abrir_pedido():
     data = request.get_json()
     mesa = Mesa.query.get(data['mesa_id'])
     
+    if not mesa or not mesa.activo:
+        return jsonify({'mensaje': 'Mesa no disponible o inexistente'}), 404
+        
     if mesa.estado == 'OCUPADA':
         return jsonify({'mensaje': 'La mesa ya está ocupada'}), 400
         
@@ -81,26 +92,19 @@ def procesar_checkout(pedido_id):
     # ====================================================================
     # HU-031: COMUNICACIÓN CON INVENTARIO PARA REDUCCIÓN DE STOCK
     # ====================================================================
-    # 1. Recopilamos todos los ítems consumidos en este pedido
     detalles = DetallePedido.query.filter_by(pedido_id=pedido.id).all()
     items_payload = [{"producto_id": d.producto_id, "cantidad": d.cantidad} for d in detalles]
     
     if items_payload:
         try:
-            # Construimos la URL hacia el microservicio de Inventario
             inventario_url = f"{current_app.config['INVENTORY_SERVICE_URL']}/descontar-venta"
-            
-            # Armamos el paquete de datos
             payload = {
                 "sede_id": mesa.sede_id,
-                "usuario_id": pedido.usuario_id, # O el ID del cajero si lo pasas en el JWT
+                "usuario_id": pedido.usuario_id,
                 "items": items_payload
             }
-            
-            # Disparamos la petición POST
             respuesta = requests.post(inventario_url, json=payload)
             
-            # Si el inventario falla (ej. alguien hizo merma manual y ya no alcanzan), bloqueamos el checkout
             if respuesta.status_code != 200:
                 return jsonify({
                     'mensaje': 'Transacción rechazada. Error al descontar stock en bodega.', 
@@ -111,19 +115,16 @@ def procesar_checkout(pedido_id):
             return jsonify({'mensaje': 'Servicio de inventario caído. No se puede cobrar el pedido.'}), 503
     # ====================================================================
 
-    # Si la comunicación fue exitosa (o si no había ítems), procedemos con el cierre financiero
     nuevo_pago = Pago(pedido_id=pedido.id, medio_pago=medio_pago, monto_pagado=pedido.total)
     pedido.estado = 'PAGADO'
-    mesa.estado = 'LIBRE' # Se libera la mesa
+    mesa.estado = 'LIBRE'
 
     db.session.add(nuevo_pago)
     db.session.commit()
     return jsonify({'mensaje': 'Checkout exitoso. Cuenta cerrada, mesa liberada y stock descontado.'}), 200
 
-# HU-025 (Vista Cajero): Obtener todas las cuentas pendientes por sede
 @orders_bp.route('/caja/pendientes/<int:sede_id>', methods=['GET'])
 def get_pendientes_caja(sede_id):
-    # Trae los pedidos en revisión de pago cruzando la información con las mesas de la sede
     pedidos_pendientes = Pedido.query.join(Mesa).filter(
         Mesa.sede_id == sede_id,
         Pedido.estado == 'PENDIENTE_PAGO'
@@ -134,20 +135,17 @@ def get_pendientes_caja(sede_id):
         resultado.append({
             "pedido_id": p.id,
             "numero_mesa": p.mesa_ref.numero_mesa,
-            "total": float(p.total), # Usamos float aquí solo para serializarlo en el JSON
+            "total": float(p.total),
             "fecha": p.fecha_creacion.strftime('%Y-%m-%d %H:%M:%S')
         })
     return jsonify(resultado), 200
+
 
 # ====================================================================
 # HU-032: HISTORIAL Y TRAZABILIDAD DE PAGOS (VISTA ADMIN)
 # ====================================================================
 @orders_bp.route('/pagos/historial/<int:sede_id>', methods=['GET'])
 def historial_pagos(sede_id):
-    """Devuelve el historial de todas las cuentas pagadas de una sede específica"""
-    
-    # Hacemos un JOIN de las 3 tablas: Pago -> Pedido -> Mesa
-    # Filtramos por sede_id y ordenamos del pago más reciente al más antiguo
     resultados_db = db.session.query(Pago, Pedido, Mesa)\
         .join(Pedido, Pago.pedido_id == Pedido.id)\
         .join(Mesa, Pedido.mesa_id == Mesa.id)\
@@ -161,10 +159,48 @@ def historial_pagos(sede_id):
             "pago_id": pago.id,
             "pedido_id": pedido.id,
             "numero_mesa": mesa.numero_mesa,
-            "usuario_cajero_id": pedido.usuario_id, # ID de quien cobró/abrió la mesa
+            "usuario_cajero_id": pedido.usuario_id,
             "medio_pago": pago.medio_pago,
-            "monto_cobrado": float(pago.monto_pagado), # Casteo a float para el JSON
+            "monto_cobrado": float(pago.monto_pagado),
             "fecha_pago": pago.fecha_pago.strftime('%Y-%m-%d %H:%M:%S')
         })
         
     return jsonify(historial), 200
+
+
+# ====================================================================
+# HU-033: GESTIÓN DE MESAS (CREACIÓN Y ELIMINACIÓN)
+# ====================================================================
+@orders_bp.route('/mesas', methods=['POST'])
+def crear_mesa():
+    """Crea una nueva mesa en el mapa de la sede"""
+    data = request.get_json()
+    sede_id = data.get('sede_id')
+    numero_mesa = data.get('numero_mesa')
+
+    if not sede_id or not numero_mesa:
+        return jsonify({'mensaje': 'Faltan datos obligatorios (sede_id, numero_mesa)'}), 400
+
+    nueva_mesa = Mesa(sede_id=sede_id, numero_mesa=numero_mesa)
+    db.session.add(nueva_mesa)
+    db.session.commit()
+    
+    return jsonify({'mensaje': f'Mesa {numero_mesa} creada exitosamente', 'mesa_id': nueva_mesa.id}), 201
+
+
+@orders_bp.route('/mesas/<int:mesa_id>', methods=['PATCH'])
+def eliminar_mesa(mesa_id):
+    """Realiza un Soft Delete (baja lógica) de una mesa"""
+    mesa = Mesa.query.get(mesa_id)
+    
+    if not mesa:
+        return jsonify({'mensaje': 'Mesa no encontrada'}), 404
+        
+    if mesa.estado == 'OCUPADA':
+        return jsonify({'mensaje': 'No puedes eliminar una mesa que tiene clientes actualmente'}), 400
+
+    # Cambiamos el estado de activación para ocultarla del front operativos sin romper llaves foráneas
+    mesa.activo = False
+    db.session.commit()
+    
+    return jsonify({'mensaje': 'Mesa eliminada (oculta del mapa) exitosamente'}), 200
