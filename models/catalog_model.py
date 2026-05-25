@@ -8,6 +8,7 @@ class Sede(db.Model):
     nombre = db.Column(db.String(100), nullable=False)
     direccion = db.Column(db.String(150))
     telefono = db.Column(db.String(20))
+    activo = db.Column(db.Boolean, default=True) # <-- NUEVO CAMPO
 
 class Producto(db.Model):
     __tablename__ = 'productos'

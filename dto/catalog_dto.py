@@ -6,7 +6,7 @@ ma = Marshmallow()
 class SedeDTO(ma.SQLAlchemyAutoSchema):
     class Meta:
         model = Sede
-        fields = ("id", "nombre", "direccion", "telefono")
+        fields = ("id", "nombre", "direccion", "telefono", "activo") # <-- AÑADIDO 'activo'
 
 class ProductoDTO(ma.SQLAlchemyAutoSchema):
     class Meta:

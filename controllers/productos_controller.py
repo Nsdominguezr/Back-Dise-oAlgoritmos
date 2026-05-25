@@ -25,3 +25,18 @@ def create_producto():
     db.session.add(nuevo_prod)
     db.session.commit()
     return jsonify(producto_dto.dump(nuevo_prod)), 201
+
+# ====================================================================
+# HU-036: ELIMINACIÓN DE PRODUCTOS (SOFT DELETE)
+# ====================================================================
+@productos_bp.route('/<int:producto_id>', methods=['PATCH'])
+@admin_global_required
+def desactivar_producto(producto_id):
+    producto = Producto.query.get(producto_id)
+    if not producto:
+        return jsonify({'mensaje': 'Producto no encontrado'}), 404
+        
+    producto.activo = False
+    db.session.commit()
+    
+    return jsonify({'mensaje': f'El producto {producto.nombre} fue retirado del catálogo operativo.'}), 200
