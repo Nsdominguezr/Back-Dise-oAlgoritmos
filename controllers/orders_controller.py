@@ -76,15 +76,49 @@ def procesar_checkout(pedido_id):
     if pedido.estado != 'PENDIENTE_PAGO':
         return jsonify({'mensaje': 'El pedido debe estar PENDIENTE_PAGO para cobrarlo'}), 400
 
+    mesa = Mesa.query.get(pedido.mesa_id)
+    
+    # ====================================================================
+    # HU-031: COMUNICACIÓN CON INVENTARIO PARA REDUCCIÓN DE STOCK
+    # ====================================================================
+    # 1. Recopilamos todos los ítems consumidos en este pedido
+    detalles = DetallePedido.query.filter_by(pedido_id=pedido.id).all()
+    items_payload = [{"producto_id": d.producto_id, "cantidad": d.cantidad} for d in detalles]
+    
+    if items_payload:
+        try:
+            # Construimos la URL hacia el microservicio de Inventario
+            inventario_url = f"{current_app.config['INVENTORY_SERVICE_URL']}/descontar-venta"
+            
+            # Armamos el paquete de datos
+            payload = {
+                "sede_id": mesa.sede_id,
+                "usuario_id": pedido.usuario_id, # O el ID del cajero si lo pasas en el JWT
+                "items": items_payload
+            }
+            
+            # Disparamos la petición POST
+            respuesta = requests.post(inventario_url, json=payload)
+            
+            # Si el inventario falla (ej. alguien hizo merma manual y ya no alcanzan), bloqueamos el checkout
+            if respuesta.status_code != 200:
+                return jsonify({
+                    'mensaje': 'Transacción rechazada. Error al descontar stock en bodega.', 
+                    'detalle': respuesta.json()
+                }), 400
+                
+        except requests.exceptions.RequestException:
+            return jsonify({'mensaje': 'Servicio de inventario caído. No se puede cobrar el pedido.'}), 503
+    # ====================================================================
+
+    # Si la comunicación fue exitosa (o si no había ítems), procedemos con el cierre financiero
     nuevo_pago = Pago(pedido_id=pedido.id, medio_pago=medio_pago, monto_pagado=pedido.total)
     pedido.estado = 'PAGADO'
-    
-    mesa = Mesa.query.get(pedido.mesa_id)
     mesa.estado = 'LIBRE' # Se libera la mesa
 
     db.session.add(nuevo_pago)
     db.session.commit()
-    return jsonify({'mensaje': 'Checkout exitoso. Cuenta cerrada y mesa liberada.'}), 200
+    return jsonify({'mensaje': 'Checkout exitoso. Cuenta cerrada, mesa liberada y stock descontado.'}), 200
 
 # HU-025 (Vista Cajero): Obtener todas las cuentas pendientes por sede
 @orders_bp.route('/caja/pendientes/<int:sede_id>', methods=['GET'])
