@@ -1,8 +1,10 @@
-from flask import Blueprint, request, jsonify, current_app
+from flask import Blueprint, request, jsonify, current_app, make_response
 from models.orders_model import db, Mesa, Pedido, DetallePedido, Pago
 import requests
 from decimal import Decimal
-from utils.auth_middleware import admin_local_or_global_required, token_required
+from utils.auth_middleware import admin_local_or_global_required, token_required, admin_global_required
+import io
+import csv
 
 orders_bp = Blueprint('orders_bp', __name__, url_prefix='/api/pedidos')
 
@@ -216,3 +218,72 @@ def eliminar_mesa(mesa_id):
     db.session.commit()
     
     return jsonify({'mensaje': 'Mesa eliminada (oculta del mapa) exitosamente'}), 200
+
+
+# ====================================================================
+# REPORTE CSV: FINANCIERO CONSOLIDADO (Reporte #7 - Con nombres de sede)
+# ====================================================================
+@orders_bp.route('/reportes/financiero', methods=['GET'])
+@admin_global_required
+def reporte_financiero_csv():
+    """Genera CSV con resumen financiero por sede y fecha incluyendo nombres"""
+    token = request.headers.get('Authorization')
+    headers = {'Authorization': token}
+
+    # 1. Obtener info de sedes desde catalog_service
+    sedes_response = requests.get(
+        f"{current_app.config['CATALOG_SERVICE_URL']}/sedes",
+        headers=headers
+    )
+    sedes = {s['id']: s['nombre'] for s in sedes_response.json()} if sedes_response.status_code == 200 else {}
+
+    # 2. Obtener todos los pagos con información de sede
+    pagos_data = db.session.query(
+        Pago.fecha_pago,
+        Pago.medio_pago,
+        Pago.monto_pagado,
+        Mesa.sede_id,
+        Pedido.total
+    ).join(Pedido, Pago.pedido_id == Pedido.id)\
+     .join(Mesa, Pedido.mesa_id == Mesa.id)\
+     .filter(Pedido.estado == 'PAGADO')\
+     .order_by(Pago.fecha_pago.desc()).all()
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(['fecha', 'sede_id', 'sede_nombre', 'total_efectivo', 'total_tc', 'total_td', 'total_ventas'])
+
+    current_row = []
+    last_date = None
+    last_sede = None
+
+    for pago in pagos_data:
+        fecha = pago.fecha_pago.strftime('%Y-%m-%d')
+        sede_id = pago.sede_id
+        sede_nombre = sedes.get(sede_id, 'N/A')
+
+        if last_date != fecha or last_sede != sede_id:
+            if current_row:
+                writer.writerow(current_row)
+            last_date = fecha
+            last_sede = sede_id
+            current_row = [fecha, sede_id, sede_nombre, 0, 0, 0, 0]
+
+        if pago.medio_pago == 'EFECTIVO':
+            current_row[3] += float(pago.monto_pagado)
+        elif pago.medio_pago == 'TC':
+            current_row[4] += float(pago.monto_pagado)
+        elif pago.medio_pago == 'TD':
+            current_row[5] += float(pago.monto_pagado)
+
+        current_row[6] += float(pago.monto_pagado)
+
+    if current_row:
+        writer.writerow(current_row)
+
+    output.seek(0)
+    response = make_response(output.getvalue())
+    response.headers['Content-Type'] = 'text/csv'
+    response.headers['Content-Disposition'] = 'attachment; filename=reporte_financiero.csv'
+
+    return response
