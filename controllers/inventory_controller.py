@@ -1,8 +1,11 @@
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, make_response
 from models.inventory_model import db, Inventario, MovimientoInventario
 from dto.inventory_dto import inventario_dto, inventarios_dto
 from utils.auth_middleware import admin_global_required, admin_local_or_global_required, token_required
 import jwt
+import io
+import csv
+import requests
 from flask import current_app
 
 inventory_bp = Blueprint('inventory_bp', __name__, url_prefix='/api/inventario')
@@ -113,3 +116,56 @@ def descontar_venta():
     except Exception as e:
         db.session.rollback()
         return jsonify({'mensaje': 'Error procesando el descuento de inventario'}), 500
+
+
+# ====================================================================
+# REPORTE CSV: INVENTARIO POR SEDE (Con nombres)
+# ====================================================================
+@inventory_bp.route('/reportes/inventario', methods=['GET'])
+@admin_global_required
+def reporte_inventario_csv():
+    """Genera CSV con stock actual por sede incluyendo nombres de productos y sedes"""
+    token = request.headers.get('Authorization')
+    headers = {'Authorization': token}
+
+    # 1. Obtener todos los inventarios
+    inventarios = Inventario.query.all()
+
+    # 2. Obtener info de productos desde catalog_service
+    productos_response = requests.get(
+        f"{current_app.config['CATALOG_SERVICE_URL']}/productos",
+        headers=headers
+    )
+    productos = {p['id']: p for p in productos_response.json()} if productos_response.status_code == 200 else {}
+
+    # 3. Obtener info de sedes desde catalog_service
+    sedes_response = requests.get(
+        f"{current_app.config['CATALOG_SERVICE_URL']}/sedes",
+        headers=headers
+    )
+    sedes = {s['id']: s for s in sedes_response.json()} if sedes_response.status_code == 200 else {}
+
+    # Crear CSV en memoria
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(['sede_id', 'sede_nombre', 'producto_id', 'producto_nombre', 'stock_actual', 'precio_unitario'])
+
+    for inv in inventarios:
+        producto = productos.get(inv.producto_id, {})
+        sede = sedes.get(inv.sede_id, {})
+
+        writer.writerow([
+            inv.sede_id,
+            sede.get('nombre', 'N/A'),
+            inv.producto_id,
+            producto.get('nombre', 'N/A'),
+            inv.cantidad,
+            producto.get('precio', 'N/A')
+        ])
+
+    output.seek(0)
+    response = make_response(output.getvalue())
+    response.headers['Content-Type'] = 'text/csv'
+    response.headers['Content-Disposition'] = 'attachment; filename=reporte_inventario.csv'
+
+    return response
