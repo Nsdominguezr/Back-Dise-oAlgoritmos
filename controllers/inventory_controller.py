@@ -169,3 +169,96 @@ def reporte_inventario_csv():
     response.headers['Content-Disposition'] = 'attachment; filename=reporte_inventario.csv'
 
     return response
+
+
+# ====================================================================
+# ALGORITMO VORAZ: REDISTRIBUCIÓN DE STOCK ENTRE SEDES
+# ====================================================================
+def calcular_redistribucion_stock(stock_disponible, sedes):
+    """
+    Algoritmo voraz para distribuir stock disponible entre sedes.
+    Ordena sedes por capacidad_maxima (mayor primero) y asigna lo máximo posible.
+
+    Args:
+        stock_disponible: Cantidad total de stock a distribuir
+        sedes: Lista de dicts [{sede_id, nombre, capacidad_maxima}, ...]
+
+    Returns:
+        dict con distribución calculada (SIN modificar BD)
+    """
+    if not sedes or stock_disponible <= 0:
+        return {
+            "stock_total": stock_disponible,
+            "distribucion": [],
+            "stock_sobrante": stock_disponible,
+            "sedes_sin_asignar": []
+        }
+
+    # Ordenar sedes por capacidad (mayor primero) - algoritmo voraz
+    sedes_ordenadas = sorted(sedes, key=lambda x: x['capacidad_maxima'], reverse=True)
+
+    distribucion = []
+    restante = stock_disponible
+    sedes_sin_asignar = []
+
+    for sede in sedes_ordenadas:
+        if restante <= 0:
+            # No hay stock para esta sede
+            sedes_sin_asignar.append(sede['sede_id'])
+            distribucion.append({
+                "sede_id": sede['sede_id'],
+                "nombre": sede['nombre'],
+                "asignado": 0,
+                "restante_capacidad": sede['capacidad_maxima']
+            })
+        else:
+            # Asignar lo máximo posible (greedy: tomar la mayor capacidad disponible)
+            asignado = min(restante, sede['capacidad_maxima'])
+            restante -= asignado
+
+            distribucion.append({
+                "sede_id": sede['sede_id'],
+                "nombre": sede['nombre'],
+                "asignado": asignado,
+                "restante_capacidad": sede['capacidad_maxima'] - asignado
+            })
+
+    return {
+        "stock_total": stock_disponible,
+        "distribucion": distribucion,
+        "stock_sobrante": restante,
+        "sedes_sin_asignar": sedes_sin_asignar
+    }
+
+
+# ====================================================================
+# ENDPOINT: SIMULAR REDISTRIBUCIÓN DE STOCK (Informativo)
+# ====================================================================
+@inventory_bp.route('/redistribuir-stock', methods=['POST'])
+@admin_global_required
+def redistribuir_stock():
+    """
+    Recibe stock disponible y sedes con capacidades.
+    Retorna cómo se distribuiría el stock (SIMULA, no modifica BD).
+    """
+    data = request.get_json()
+
+    producto_id = data.get('producto_id')
+    stock_disponible = data.get('stock_disponible')
+    sedes = data.get('sedes', [])
+
+    if not producto_id or stock_disponible is None:
+        return jsonify({'mensaje': 'producto_id y stock_disponible son requeridos'}), 400
+
+    if not isinstance(stock_disponible, int) or stock_disponible <= 0:
+        return jsonify({'mensaje': 'stock_disponible debe ser un entero positivo'}), 400
+
+    if not sedes:
+        return jsonify({'mensaje': 'Se requiere al menos una sede'}), 400
+
+    resultado = calcular_redistribucion_stock(stock_disponible, sedes)
+
+    return jsonify({
+        'producto_id': producto_id,
+        'resultado': resultado
+    }), 200
