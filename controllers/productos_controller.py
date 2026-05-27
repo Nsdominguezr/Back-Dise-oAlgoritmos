@@ -5,10 +5,43 @@ from utils.auth_middleware import admin_global_required
 
 productos_bp = Blueprint('productos_bp', __name__, url_prefix='/api/productos')
 
+
+# ====================================================================
+# ALGORITMO: ORDENAMIENTO RÁPIDO (Quick Sort)
+# ====================================================================
+def ordenamiento_rapido(arreglo):
+    """Ordena un arreglo usando el algoritmo Quick Sort"""
+    if len(arreglo) <= 1:
+        return arreglo
+    pivote = arreglo[len(arreglo) // 2]
+    izquierda = [x for x in arreglo if x < pivote]
+    medio = [x for x in arreglo if x == pivote]
+    derecha = [x for x in arreglo if x > pivote]
+    return ordenamiento_rapido(izquierda) + medio + ordenamiento_rapido(derecha)
+
+
+# ====================================================================
+# ENDPOINTS
+# ====================================================================
 @productos_bp.route('', methods=['GET'])
 def get_productos():
     productos = Producto.query.filter_by(activo=True).all()
-    return jsonify(productos_dto.dump(productos)), 200
+
+    # Ordenar por precio usando Quick Sort (menor a mayor)
+    precios_productos = [(float(p.precio), p) for p in productos]
+
+    # Ordenar solo los precios
+    precios_ordenados = ordenamiento_rapido([precio for precio, _ in precios_productos])
+
+    # Reconstruir lista de productos en orden
+    productos_ordenados = []
+    for precio in precios_ordenados:
+        for prec, prod in precios_productos:
+            if prec == precio and prod not in productos_ordenados:
+                productos_ordenados.append(prod)
+                break
+
+    return jsonify(productos_dto.dump(productos_ordenados)), 200
 
 @productos_bp.route('', methods=['POST'])
 @admin_global_required # Solo Admin Global según HU-011
