@@ -2,6 +2,7 @@ from flask import Blueprint, request, jsonify, current_app
 from models.orders_model import db, Mesa, Pedido, DetallePedido, Pago
 import requests
 from decimal import Decimal
+from utils.auth_middleware import admin_local_or_global_required, token_required
 
 orders_bp = Blueprint('orders_bp', __name__, url_prefix='/api/pedidos')
 
@@ -9,6 +10,7 @@ orders_bp = Blueprint('orders_bp', __name__, url_prefix='/api/pedidos')
 
 # HU-019 / HU-033: Obtener mesas ACTIVAS de una sede (Filtrado para ocultar eliminadas)
 @orders_bp.route('/mesas/<int:sede_id>', methods=['GET'])
+@token_required
 def get_mesas(sede_id):
     # Trae solo las mesas que no han sido dadas de baja lógicamente
     mesas = Mesa.query.filter_by(sede_id=sede_id, activo=True).all()
@@ -16,6 +18,7 @@ def get_mesas(sede_id):
     return jsonify(resultado), 200
 
 @orders_bp.route('/abrir', methods=['POST'])
+@token_required
 def abrir_pedido():
     data = request.get_json()
     mesa = Mesa.query.get(data['mesa_id'])
@@ -33,6 +36,7 @@ def abrir_pedido():
     return jsonify({'mensaje': 'Pedido abierto', 'pedido_id': nuevo_pedido.id}), 201
 
 @orders_bp.route('/<int:pedido_id>/items', methods=['POST'])
+@token_required
 def agregar_item(pedido_id):
     data = request.get_json()
     pedido = Pedido.query.get(pedido_id)
@@ -43,7 +47,8 @@ def agregar_item(pedido_id):
     # Comunicación HTTP con Inventario (Puerto 5003) para validar stock
     try:
         url = f"{current_app.config['INVENTORY_SERVICE_URL']}/sede/{data['sede_id']}"
-        stock_data = requests.get(url).json()
+        headers = {'Authorization': request.headers.get('Authorization')}
+        stock_data = requests.get(url, headers=headers).json()
         
         stock_disponible = next((item['cantidad'] for item in stock_data if item['producto_id'] == data['producto_id']), 0)
         if stock_disponible < int(data['cantidad']):
@@ -66,6 +71,7 @@ def agregar_item(pedido_id):
 # ----------------- FUNCIONES DE LA CAJA (SPRINT 6) -----------------
 
 @orders_bp.route('/<int:pedido_id>/pasar-a-caja', methods=['PATCH'])
+@token_required
 def pasar_a_caja(pedido_id):
     pedido = Pedido.query.get(pedido_id)
     if pedido.estado != 'ABIERTO':
@@ -76,6 +82,7 @@ def pasar_a_caja(pedido_id):
     return jsonify({'mensaje': 'Pedido enviado a caja. Edición bloqueada.'}), 200
 
 @orders_bp.route('/<int:pedido_id>/checkout', methods=['POST'])
+@token_required
 def procesar_checkout(pedido_id):
     data = request.get_json()
     medio_pago = data.get('medio_pago')
@@ -103,7 +110,8 @@ def procesar_checkout(pedido_id):
                 "usuario_id": pedido.usuario_id,
                 "items": items_payload
             }
-            respuesta = requests.post(inventario_url, json=payload)
+            headers = {'Authorization': request.headers.get('Authorization')}
+            respuesta = requests.post(inventario_url, json=payload, headers=headers)
             
             if respuesta.status_code != 200:
                 return jsonify({
@@ -124,6 +132,7 @@ def procesar_checkout(pedido_id):
     return jsonify({'mensaje': 'Checkout exitoso. Cuenta cerrada, mesa liberada y stock descontado.'}), 200
 
 @orders_bp.route('/caja/pendientes/<int:sede_id>', methods=['GET'])
+@token_required
 def get_pendientes_caja(sede_id):
     pedidos_pendientes = Pedido.query.join(Mesa).filter(
         Mesa.sede_id == sede_id,
@@ -145,6 +154,7 @@ def get_pendientes_caja(sede_id):
 # HU-032: HISTORIAL Y TRAZABILIDAD DE PAGOS (VISTA ADMIN)
 # ====================================================================
 @orders_bp.route('/pagos/historial/<int:sede_id>', methods=['GET'])
+@token_required
 def historial_pagos(sede_id):
     resultados_db = db.session.query(Pago, Pedido, Mesa)\
         .join(Pedido, Pago.pedido_id == Pedido.id)\
@@ -172,6 +182,7 @@ def historial_pagos(sede_id):
 # HU-033: GESTIÓN DE MESAS (CREACIÓN Y ELIMINACIÓN)
 # ====================================================================
 @orders_bp.route('/mesas', methods=['POST'])
+@admin_local_or_global_required
 def crear_mesa():
     """Crea una nueva mesa en el mapa de la sede"""
     data = request.get_json()
@@ -184,11 +195,12 @@ def crear_mesa():
     nueva_mesa = Mesa(sede_id=sede_id, numero_mesa=numero_mesa)
     db.session.add(nueva_mesa)
     db.session.commit()
-    
+
     return jsonify({'mensaje': f'Mesa {numero_mesa} creada exitosamente', 'mesa_id': nueva_mesa.id}), 201
 
 
 @orders_bp.route('/mesas/<int:mesa_id>', methods=['PATCH'])
+@admin_local_or_global_required
 def eliminar_mesa(mesa_id):
     """Realiza un Soft Delete (baja lógica) de una mesa"""
     mesa = Mesa.query.get(mesa_id)
