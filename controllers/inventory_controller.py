@@ -1,8 +1,7 @@
 from flask import Blueprint, request, jsonify
 from models.inventory_model import db, Inventario, MovimientoInventario
 from dto.inventory_dto import inventario_dto, inventarios_dto
-# Asume que importas un decorador que valida tokens (reutiliza el de auth)
-from utils.auth_middleware import admin_global_required 
+from utils.auth_middleware import admin_global_required, admin_local_or_global_required, token_required
 import jwt
 from flask import current_app
 
@@ -15,13 +14,14 @@ def get_user_from_token(req):
     return data['user_id']
 
 @inventory_bp.route('/sede/<int:sede_id>', methods=['GET'])
+@token_required
 def get_stock_sede(sede_id):
     """Vista de stock por sede"""
     stock = Inventario.query.filter_by(sede_id=sede_id).all()
     return jsonify(inventarios_dto.dump(stock)), 200
 
 @inventory_bp.route('/movimiento', methods=['POST'])
-@admin_global_required # Puedes ajustarlo luego para que un Admin Local también pueda
+@admin_local_or_global_required
 def registrar_movimiento():
     """Registra ingreso o merma manual y actualiza el stock exacto"""
     data = request.get_json()
@@ -72,6 +72,7 @@ def registrar_movimiento():
         return jsonify({'mensaje': 'Error en la transacción de inventario'}), 500
     
 @inventory_bp.route('/descontar-venta', methods=['POST'])
+@token_required
 def descontar_venta():
     """Endpoint interno: Descuenta el stock automáticamente al pagar una cuenta"""
     data = request.get_json()
