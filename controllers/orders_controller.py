@@ -8,6 +8,95 @@ import csv
 
 orders_bp = Blueprint('orders_bp', __name__, url_prefix='/api/pedidos')
 
+
+# ====================================================================
+# ALGORITMO DE LA MOCHILA - OPTIMIZACIÓN DE COLA DE PEDIDOS
+# ====================================================================
+def leer_entero(valor):
+    """Valida que la entrada sea un número entero positivo."""
+    try:
+        v = int(valor)
+        return v if v > 0 else None
+    except:
+        return None
+
+def resolver_mochila_pedidos(pedidos, capacidad):
+    """
+    Algoritmo de la Mochila (Programación Dinámica).
+    Entrada: lista de pedidos con {id, cantidad_items, total}
+    Capacidad: máximo de items que se pueden procesar
+    Salida: combinación óptima de pedidos que maximiza revenue
+    """
+    n = len(pedidos)
+    if n == 0 or capacidad <= 0:
+        return {"pedidos_seleccionados": [], "items_total": 0, "beneficio_total": 0}
+
+    # Preparar datos ordenados por beneficio (ratio beneficio/volumen descendente)
+    articulos = []
+    for p in pedidos:
+        ratio = p['total'] / p['cantidad_items'] if p['cantidad_items'] > 0 else 0
+        articulos.append({
+            "id": p['id'],
+            "nombre": p.get('nombre', f"Pedido #{p['id']}"),
+            "volumen": p['cantidad_items'],
+            "beneficio": p['total'],
+            "ratio": ratio
+        })
+
+    # Ordenar por ratio beneficio/volumen (más eficiente primero)
+    articulos.sort(key=lambda x: x['ratio'], reverse=True)
+
+    # Capacidad máxima = la mayor cantidad de items en un solo pedido
+    capacidad_maxima = max(a['volumen'] for a in articulos) if articulos else capacidad
+    # Pero no puede exceder la capacidad real de procesamiento
+    capacidad_maxima = min(capacidad_maxima, capacidad)
+
+    # Inicializar tabla DP
+    dp = [[0 for _ in range(capacidad_maxima + 1)] for _ in range(n + 1)]
+    combinaciones = [["" for _ in range(capacidad_maxima + 1)] for _ in range(n + 1)]
+
+    # Programación Dinámica
+    for i in range(1, n + 1):
+        art = articulos[i-1]
+        v_actual = art['volumen']
+        b_actual = art['beneficio']
+
+        for j in range(capacidad_maxima + 1):
+            beneficio_sin = dp[i-1][j]
+            comb_sin = combinaciones[i-1][j]
+
+            if v_actual <= j:
+                beneficio_con = b_actual + dp[i-1][j - v_actual]
+
+                if beneficio_con >= beneficio_sin:
+                    dp[i][j] = beneficio_con
+                    previo = combinaciones[i-1][j - v_actual]
+                    combinaciones[i][j] = f"{previo}+{art['id']}" if previo else str(art['id'])
+                else:
+                    dp[i][j] = beneficio_sin
+                    combinaciones[i][j] = comb_sin
+            else:
+                dp[i][j] = beneficio_sin
+                combinaciones[i][j] = comb_sin
+
+    # Extraer resultado
+    resultado_beneficio = dp[n][capacidad_maxima]
+    combinacion_str = combinaciones[n][capacidad_maxima]
+
+    # Parsear IDs de pedidos seleccionados
+    pedidos_seleccionados = []
+    if combinacion_str:
+        pedidos_seleccionados = [int(x) for x in combinacion_str.split('+')]
+
+    # Calcular items totales usados
+    items_total = sum(a['volumen'] for a in articulos if a['id'] in pedidos_seleccionados)
+
+    return {
+        "pedidos_seleccionados": pedidos_seleccionados,
+        "items_total": items_total,
+        "beneficio_total": resultado_beneficio
+    }
+
 # ----------------- FUNCIONES DEL MESERO (SPRINT 5) -----------------
 
 # HU-019 / HU-033: Obtener mesas ACTIVAS de una sede (Filtrado para ocultar eliminadas)
@@ -287,3 +376,70 @@ def reporte_financiero_csv():
     response.headers['Content-Disposition'] = 'attachment; filename=reporte_financiero.csv'
 
     return response
+
+
+# ====================================================================
+# ENDPOINT: OPTIMIZACIÓN DE COLA DE PEDIDOS (Mochila DP)
+# ====================================================================
+@orders_bp.route('/optimizar-cola', methods=['POST'])
+@admin_local_or_global_required
+def optimizar_cola_pedidos():
+    """
+    Recibe una sede y capacidad máxima de items.
+    Retorna qué pedidos procesar primero para maximizar revenue.
+    """
+    data = request.get_json()
+    sede_id = data.get('sede_id')
+    capacidad = leer_entero(data.get('capacidad_items', 20))
+
+    if not sede_id:
+        return jsonify({'mensaje': 'Se requiere sede_id'}), 400
+    if not capacidad:
+        return jsonify({'mensaje': 'Capacidad debe ser un número entero positivo'}), 400
+
+    # Obtener pedidos pendientes de pago en esta sede
+    pedidos_pendientes = db.session.query(
+        Pedido.id,
+        Pedido.total,
+        Pedido.fecha_creacion
+    ).join(Mesa, Pedido.mesa_id == Mesa.id)\
+     .filter(Mesa.sede_id == sede_id)\
+     .filter(Pedido.estado == 'PENDIENTE_PAGO')\
+     .order_by(Pedido.fecha_creacion.asc()).all()
+
+    if not pedidos_pendientes:
+        return jsonify({
+            'mensaje': 'No hay pedidos pendientes en esta sede',
+            'pedidos_seleccionados': [],
+            'items_total': 0,
+            'beneficio_total': 0
+        }), 200
+
+    # Calcular cantidad de items por pedido desde DetallePedido
+    pedidos_data = []
+    for p in pedidos_pendientes:
+        detalles = DetallePedido.query.filter_by(pedido_id=p.id).all()
+        cantidad_items = sum(d.cantidad for d in detalles)
+
+        pedidos_data.append({
+            'id': p.id,
+            'cantidad_items': cantidad_items if cantidad_items > 0 else 1,  # mínimo 1
+            'total': float(p.total) if p.total else 0
+        })
+
+    # Ejecutar algoritmo de la mochila
+    resultado = resolver_mochila_pedidos(pedidos_data, capacidad)
+
+    # Obtener IDs de pedidos no seleccionados
+    todos_los_ids = [p['id'] for p in pedidos_data]
+    pedidos_omitidos = [pid for pid in todos_los_ids if pid not in resultado['pedidos_seleccionados']]
+
+    return jsonify({
+        'sede_id': sede_id,
+        'capacidad_items': capacidad,
+        'pedidos_seleccionados': resultado['pedidos_seleccionados'],
+        'items_total': resultado['items_total'],
+        'beneficio_total': resultado['beneficio_total'],
+        'pedidos_omitidos': pedidos_omitidos,
+        'total_pedidos_pendientes': len(pedidos_data)
+    }), 200
