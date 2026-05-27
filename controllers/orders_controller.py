@@ -1,8 +1,17 @@
+"""
+Módulo de controlador de pedidos.
+Gestiona las operaciones de pedidos, mesas, caja y pagos.
+"""
+
 from flask import Blueprint, request, jsonify, current_app, make_response
 from models.orders_model import db, Mesa, Pedido, DetallePedido, Pago
 import requests
 from decimal import Decimal
-from utils.auth_middleware import admin_local_or_global_required, token_required, admin_global_required
+from utils.auth_middleware import (
+    admin_local_or_global_required,
+    token_required,
+    admin_global_required
+)
 import io
 import csv
 
@@ -13,25 +22,42 @@ orders_bp = Blueprint('orders_bp', __name__, url_prefix='/api/pedidos')
 # ALGORITMO DE LA MOCHILA - OPTIMIZACIÓN DE COLA DE PEDIDOS
 # ====================================================================
 def leer_entero(valor):
-    """Valida que la entrada sea un número entero positivo."""
+    """Valida que la entrada sea un número entero positivo.
+
+    Args:
+        valor: Valor a validar.
+
+    Returns:
+        Entero positivo o None si no es válido.
+    """
     try:
         v = int(valor)
         return v if v > 0 else None
-    except:
+    except Exception:
         return None
 
 def resolver_mochila_pedidos(pedidos, capacidad):
-    """
-    Algoritmo de la Mochila (Programación Dinámica).
-    Entrada: lista de pedidos con {id, cantidad_items, total}
-    Capacidad: máximo de items que se pueden procesar
-    Salida: combinación óptima de pedidos que maximiza revenue
+    """Algoritmo de la Mochila (Programación Dinámica).
+
+    Selecciona la combinación óptima de pedidos que maximiza el
+    beneficio total respeando la capacidad máxima de items.
+
+    Args:
+        pedidos: Lista de dicts con {id, cantidad_items, total}.
+        capacidad: Capacidad máxima de items a procesar.
+
+    Returns:
+        Dict con pedidos_seleccionados, items_total y beneficio_total.
     """
     n = len(pedidos)
     if n == 0 or capacidad <= 0:
-        return {"pedidos_seleccionados": [], "items_total": 0, "beneficio_total": 0}
+        return {
+            "pedidos_seleccionados": [],
+            "items_total": 0,
+            "beneficio_total": 0
+        }
 
-    # Preparar datos ordenados por beneficio (ratio beneficio/volumen descendente)
+    # Preparar datos ordenados por beneficio (ratio beneficio/volumen).
     articulos = []
     for p in pedidos:
         ratio = p['total'] / p['cantidad_items'] if p['cantidad_items'] > 0 else 0
@@ -43,34 +69,34 @@ def resolver_mochila_pedidos(pedidos, capacidad):
             "ratio": ratio
         })
 
-    # Ordenar por ratio beneficio/volumen (más eficiente primero)
+    # Ordenar por ratio beneficio/volumen (más eficiente primero).
     articulos.sort(key=lambda x: x['ratio'], reverse=True)
 
-    # Capacidad máxima = la mayor cantidad de items en un solo pedido
+    # Capacidad máxima = la mayor cantidad de items en un solo pedido.
     capacidad_maxima = max(a['volumen'] for a in articulos) if articulos else capacidad
-    # Pero no puede exceder la capacidad real de procesamiento
+    # Pero no puede exceder la capacidad real de procesamiento.
     capacidad_maxima = min(capacidad_maxima, capacidad)
 
-    # Inicializar tabla DP
+    # Inicializar tabla de programación dinámica.
     dp = [[0 for _ in range(capacidad_maxima + 1)] for _ in range(n + 1)]
     combinaciones = [["" for _ in range(capacidad_maxima + 1)] for _ in range(n + 1)]
 
-    # Programación Dinámica
+    # Programación Dinámica: construir tabla de soluciones.
     for i in range(1, n + 1):
-        art = articulos[i-1]
+        art = articulos[i - 1]
         v_actual = art['volumen']
         b_actual = art['beneficio']
 
         for j in range(capacidad_maxima + 1):
-            beneficio_sin = dp[i-1][j]
-            comb_sin = combinaciones[i-1][j]
+            beneficio_sin = dp[i - 1][j]
+            comb_sin = combinaciones[i - 1][j]
 
             if v_actual <= j:
-                beneficio_con = b_actual + dp[i-1][j - v_actual]
+                beneficio_con = b_actual + dp[i - 1][j - v_actual]
 
                 if beneficio_con >= beneficio_sin:
                     dp[i][j] = beneficio_con
-                    previo = combinaciones[i-1][j - v_actual]
+                    previo = combinaciones[i - 1][j - v_actual]
                     combinaciones[i][j] = f"{previo}+{art['id']}" if previo else str(art['id'])
                 else:
                     dp[i][j] = beneficio_sin
@@ -79,16 +105,16 @@ def resolver_mochila_pedidos(pedidos, capacidad):
                 dp[i][j] = beneficio_sin
                 combinaciones[i][j] = comb_sin
 
-    # Extraer resultado
+    # Extraer resultado final de la tabla DP.
     resultado_beneficio = dp[n][capacidad_maxima]
     combinacion_str = combinaciones[n][capacidad_maxima]
 
-    # Parsear IDs de pedidos seleccionados
+    # Parsear IDs de pedidos seleccionados.
     pedidos_seleccionados = []
     if combinacion_str:
         pedidos_seleccionados = [int(x) for x in combinacion_str.split('+')]
 
-    # Calcular items totales usados
+    # Calcular items totales usados.
     items_total = sum(a['volumen'] for a in articulos if a['id'] in pedidos_seleccionados)
 
     return {
@@ -100,57 +126,95 @@ def resolver_mochila_pedidos(pedidos, capacidad):
 # ----------------- FUNCIONES DEL MESERO (SPRINT 5) -----------------
 
 # HU-019 / HU-033: Obtener mesas ACTIVAS de una sede (Filtrado para ocultar eliminadas)
+
+
 @orders_bp.route('/mesas/<int:sede_id>', methods=['GET'])
 @token_required
 def get_mesas(sede_id):
-    # Trae solo las mesas que no han sido dadas de baja lógicamente
+    """Obtiene las mesas activas de una sede.
+
+    Args:
+        sede_id: ID de la sede a consultar.
+
+    Returns:
+        Lista de diccionarios con id, numero_mesa y estado.
+    """
+    # Trae solo las mesas que no han sido dadas de baja lógicamente.
     mesas = Mesa.query.filter_by(sede_id=sede_id, activo=True).all()
-    resultado = [{"id": m.id, "numero_mesa": m.numero_mesa, "estado": m.estado} for m in mesas]
+    resultado = [
+        {"id": m.id, "numero_mesa": m.numero_mesa, "estado": m.estado}
+        for m in mesas
+    ]
     return jsonify(resultado), 200
+
 
 @orders_bp.route('/abrir', methods=['POST'])
 @token_required
 def abrir_pedido():
+    """Abre un nuevo pedido para una mesa.
+
+    Args:
+        None (datos en JSON: mesa_id, usuario_id).
+
+    Returns:
+        Mensaje de éxito con pedido_id o error entsprechend.
+    """
     data = request.get_json()
     mesa = Mesa.query.get(data['mesa_id'])
-    
+
     if not mesa or not mesa.activo:
         return jsonify({'mensaje': 'Mesa no disponible o inexistente'}), 404
-        
+
     if mesa.estado == 'OCUPADA':
         return jsonify({'mensaje': 'La mesa ya está ocupada'}), 400
-        
+
     mesa.estado = 'OCUPADA'
     nuevo_pedido = Pedido(mesa_id=mesa.id, usuario_id=data['usuario_id'])
     db.session.add(nuevo_pedido)
     db.session.commit()
     return jsonify({'mensaje': 'Pedido abierto', 'pedido_id': nuevo_pedido.id}), 201
 
+
 @orders_bp.route('/<int:pedido_id>/items', methods=['POST'])
 @token_required
 def agregar_item(pedido_id):
+    """Agrega un item a un pedido abierto.
+
+    Valida stock con el servicio de inventario antes de agregar.
+
+    Args:
+        pedido_id: ID del pedido.
+
+    Returns:
+        Mensaje con nuevo_total o error entsprechend.
+    """
     data = request.get_json()
     pedido = Pedido.query.get(pedido_id)
-    
+
     if pedido.estado != 'ABIERTO':
         return jsonify({'mensaje': 'El pedido ya no se puede modificar, está en caja o pagado'}), 403
 
-    # Comunicación HTTP con Inventario (Puerto 5003) para validar stock
+    # Comunicación HTTP con Inventario (Puerto 5003) para validar stock.
     try:
         url = f"{current_app.config['INVENTORY_SERVICE_URL']}/sede/{data['sede_id']}"
         headers = {'Authorization': request.headers.get('Authorization')}
         stock_data = requests.get(url, headers=headers).json()
-        
-        stock_disponible = next((item['cantidad'] for item in stock_data if item['producto_id'] == data['producto_id']), 0)
+
+        stock_disponible = next(
+            (item['cantidad'] for item in stock_data if item['producto_id'] == data['producto_id']),
+            0
+        )
         if stock_disponible < int(data['cantidad']):
-            return jsonify({'mensaje': f'Stock insuficiente. Solo hay {stock_disponible} disponibles.'}), 400
+            return jsonify(
+                {'mensaje': f'Stock insuficiente. Solo hay {stock_disponible} disponibles.'}
+            ), 400
     except Exception:
         return jsonify({'mensaje': 'Error comunicándose con el servicio de inventario'}), 503
 
     nuevo_detalle = DetallePedido(
-        pedido_id=pedido.id, 
-        producto_id=data['producto_id'], 
-        cantidad=data['cantidad'], 
+        pedido_id=pedido.id,
+        producto_id=data['producto_id'],
+        cantidad=data['cantidad'],
         precio_unitario=data['precio_unitario']
     )
     pedido.total += (int(data['cantidad']) * Decimal(str(data['precio_unitario'])))
@@ -161,9 +225,18 @@ def agregar_item(pedido_id):
 
 # ----------------- FUNCIONES DE LA CAJA (SPRINT 6) -----------------
 
+
 @orders_bp.route('/<int:pedido_id>/pasar-a-caja', methods=['PATCH'])
 @token_required
 def pasar_a_caja(pedido_id):
+    """Envía un pedido abierto a la caja para su cobro.
+
+    Args:
+        pedido_id: ID del pedido.
+
+    Returns:
+        Mensaje de éxito o error entsprechend.
+    """
     pedido = Pedido.query.get(pedido_id)
     if pedido.estado != 'ABIERTO':
         return jsonify({'mensaje': 'El pedido no se puede congelar'}), 400
@@ -172,27 +245,41 @@ def pasar_a_caja(pedido_id):
     db.session.commit()
     return jsonify({'mensaje': 'Pedido enviado a caja. Edición bloqueada.'}), 200
 
+
 @orders_bp.route('/<int:pedido_id>/checkout', methods=['POST'])
 @token_required
 def procesar_checkout(pedido_id):
+    """Procesa el pago de un pedido y cierra la cuenta.
+
+    Args:
+        pedido_id: ID del pedido.
+
+    Returns:
+        Mensaje de éxito o error entsprechend.
+    """
     data = request.get_json()
     medio_pago = data.get('medio_pago')
-    
+
     if not medio_pago or medio_pago not in ['EFECTIVO', 'TC', 'TD']:
-        return jsonify({'mensaje': 'Debe especificar un medio de pago válido (EFECTIVO, TC, TD)'}), 400
+        return jsonify(
+            {'mensaje': 'Debe especificar un medio de pago válido (EFECTIVO, TC, TD)'}
+        ), 400
 
     pedido = Pedido.query.get(pedido_id)
     if pedido.estado != 'PENDIENTE_PAGO':
         return jsonify({'mensaje': 'El pedido debe estar PENDIENTE_PAGO para cobrarlo'}), 400
 
     mesa = Mesa.query.get(pedido.mesa_id)
-    
+
     # ====================================================================
     # HU-031: COMUNICACIÓN CON INVENTARIO PARA REDUCCIÓN DE STOCK
     # ====================================================================
     detalles = DetallePedido.query.filter_by(pedido_id=pedido.id).all()
-    items_payload = [{"producto_id": d.producto_id, "cantidad": d.cantidad} for d in detalles]
-    
+    items_payload = [
+        {"producto_id": d.producto_id, "cantidad": d.cantidad}
+        for d in detalles
+    ]
+
     if items_payload:
         try:
             inventario_url = f"{current_app.config['INVENTORY_SERVICE_URL']}/descontar-venta"
@@ -203,33 +290,52 @@ def procesar_checkout(pedido_id):
             }
             headers = {'Authorization': request.headers.get('Authorization')}
             respuesta = requests.post(inventario_url, json=payload, headers=headers)
-            
+
             if respuesta.status_code != 200:
                 return jsonify({
-                    'mensaje': 'Transacción rechazada. Error al descontar stock en bodega.', 
+                    'mensaje': 'Transacción rechazada. Error al descontar stock en bodega.',
                     'detalle': respuesta.json()
                 }), 400
-                
+
         except requests.exceptions.RequestException:
-            return jsonify({'mensaje': 'Servicio de inventario caído. No se puede cobrar el pedido.'}), 503
+            return jsonify(
+                {'mensaje': 'Servicio de inventario caído. No se puede cobrar el pedido.'}
+            ), 503
     # ====================================================================
 
-    nuevo_pago = Pago(pedido_id=pedido.id, medio_pago=medio_pago, monto_pagado=pedido.total)
+    nuevo_pago = Pago(
+        pedido_id=pedido.id,
+        medio_pago=medio_pago,
+        monto_pagado=pedido.total
+    )
     pedido.estado = 'PAGADO'
     mesa.estado = 'LIBRE'
 
     db.session.add(nuevo_pago)
     db.session.commit()
-    return jsonify({'mensaje': 'Checkout exitoso. Cuenta cerrada, mesa liberada y stock descontado.'}), 200
+    return jsonify(
+        {'mensaje': 'Checkout exitoso. Cuenta cerrada, mesa liberada y stock descontado.'}
+    ), 200
+
 
 @orders_bp.route('/caja/pendientes/<int:sede_id>', methods=['GET'])
 @token_required
 def get_pendientes_caja(sede_id):
-    pedidos_pendientes = Pedido.query.join(Mesa).filter(
+    """Obtiene pedidos pendientes de pago en una sede.
+
+    Args:
+        sede_id: ID de la sede.
+
+    Returns:
+        Lista de pedidos pendientes con detalle.
+    """
+    pedidos_pendientes = db.session.query(
+        Pedido
+    ).join(Mesa).filter(
         Mesa.sede_id == sede_id,
         Pedido.estado == 'PENDIENTE_PAGO'
     ).all()
-    
+
     resultado = []
     for p in pedidos_pendientes:
         resultado.append({
@@ -247,13 +353,20 @@ def get_pendientes_caja(sede_id):
 @orders_bp.route('/pagos/historial/<int:sede_id>', methods=['GET'])
 @token_required
 def historial_pagos(sede_id):
-    resultados_db = db.session.query(Pago, Pedido, Mesa)\
-        .join(Pedido, Pago.pedido_id == Pedido.id)\
-        .join(Mesa, Pedido.mesa_id == Mesa.id)\
-        .filter(Mesa.sede_id == sede_id)\
-        .order_by(Pago.fecha_pago.desc())\
-        .all()
-    
+    """Obtiene el historial de pagos de una sede.
+
+    Args:
+        sede_id: ID de la sede.
+
+    Returns:
+        Lista de pagos con información de pedido y mesa.
+    """
+    resultados_db = db.session.query(
+        Pago, Pedido, Mesa
+    ).join(Pedido, Pago.pedido_id == Pedido.id).join(Mesa, Pedido.mesa_id == Mesa.id).filter(
+        Mesa.sede_id == sede_id
+    ).order_by(Pago.fecha_pago.desc()).all()
+
     historial = []
     for pago, pedido, mesa in resultados_db:
         historial.append({
@@ -265,7 +378,7 @@ def historial_pagos(sede_id):
             "monto_cobrado": float(pago.monto_pagado),
             "fecha_pago": pago.fecha_pago.strftime('%Y-%m-%d %H:%M:%S')
         })
-        
+
     return jsonify(historial), 200
 
 
@@ -275,37 +388,58 @@ def historial_pagos(sede_id):
 @orders_bp.route('/mesas', methods=['POST'])
 @admin_local_or_global_required
 def crear_mesa():
-    """Crea una nueva mesa en el mapa de la sede"""
+    """Crea una nueva mesa en el mapa de la sede.
+
+    Args:
+        None (datos en JSON: sede_id, numero_mesa).
+
+    Returns:
+        Mensaje de éxito con mesa_id o error entsprechend.
+    """
     data = request.get_json()
     sede_id = data.get('sede_id')
     numero_mesa = data.get('numero_mesa')
 
     if not sede_id or not numero_mesa:
-        return jsonify({'mensaje': 'Faltan datos obligatorios (sede_id, numero_mesa)'}), 400
+        return jsonify(
+            {'mensaje': 'Faltan datos obligatorios (sede_id, numero_mesa)'}
+        ), 400
 
     nueva_mesa = Mesa(sede_id=sede_id, numero_mesa=numero_mesa)
     db.session.add(nueva_mesa)
     db.session.commit()
 
-    return jsonify({'mensaje': f'Mesa {numero_mesa} creada exitosamente', 'mesa_id': nueva_mesa.id}), 201
+    return jsonify(
+        {'mensaje': f'Mesa {numero_mesa} creada exitosamente', 'mesa_id': nueva_mesa.id}
+    ), 201
 
 
 @orders_bp.route('/mesas/<int:mesa_id>', methods=['PATCH'])
 @admin_local_or_global_required
 def eliminar_mesa(mesa_id):
-    """Realiza un Soft Delete (baja lógica) de una mesa"""
+    """Realiza un Soft Delete (baja lógica) de una mesa.
+
+    Args:
+        mesa_id: ID de la mesa a eliminar.
+
+    Returns:
+        Mensaje de éxito o error entsprechend.
+    """
     mesa = Mesa.query.get(mesa_id)
-    
+
     if not mesa:
         return jsonify({'mensaje': 'Mesa no encontrada'}), 404
-        
-    if mesa.estado == 'OCUPADA':
-        return jsonify({'mensaje': 'No puedes eliminar una mesa que tiene clientes actualmente'}), 400
 
-    # Cambiamos el estado de activación para ocultarla del front operativos sin romper llaves foráneas
+    if mesa.estado == 'OCUPADA':
+        return jsonify(
+            {'mensaje': 'No puedes eliminar una mesa que tiene clientes actualmente'}
+        ), 400
+
+    # Cambiamos el estado de activación para ocultarla del front
+    # operativos sin romper llaves foráneas.
     mesa.activo = False
     db.session.commit()
-    
+
     return jsonify({'mensaje': 'Mesa eliminada (oculta del mapa) exitosamente'}), 200
 
 
@@ -315,32 +449,39 @@ def eliminar_mesa(mesa_id):
 @orders_bp.route('/reportes/financiero', methods=['GET'])
 @admin_global_required
 def reporte_financiero_csv():
-    """Genera CSV con resumen financiero por sede y fecha incluyendo nombres"""
+    """Genera CSV con resumen financiero por sede y fecha incluyendo nombres.
+
+    Returns:
+        Archivo CSV con columnas: fecha, sede_id, sede_nombre,
+        total_efectivo, total_tc, total_td, total_ventas.
+    """
     token = request.headers.get('Authorization')
     headers = {'Authorization': token}
 
-    # 1. Obtener info de sedes desde catalog_service
+    # 1. Obtener info de sedes desde catalog_service.
     sedes_response = requests.get(
         f"{current_app.config['CATALOG_SERVICE_URL']}/sedes",
         headers=headers
     )
     sedes = {s['id']: s['nombre'] for s in sedes_response.json()} if sedes_response.status_code == 200 else {}
 
-    # 2. Obtener todos los pagos con información de sede
+    # 2. Obtener todos los pagos con información de sede.
     pagos_data = db.session.query(
         Pago.fecha_pago,
         Pago.medio_pago,
         Pago.monto_pagado,
         Mesa.sede_id,
         Pedido.total
-    ).join(Pedido, Pago.pedido_id == Pedido.id)\
-     .join(Mesa, Pedido.mesa_id == Mesa.id)\
-     .filter(Pedido.estado == 'PAGADO')\
-     .order_by(Pago.fecha_pago.desc()).all()
+    ).join(Pedido, Pago.pedido_id == Pedido.id).join(Mesa, Pedido.mesa_id == Mesa.id).filter(
+        Pedido.estado == 'PAGADO'
+    ).order_by(Pago.fecha_pago.desc()).all()
 
     output = io.StringIO()
     writer = csv.writer(output)
-    writer.writerow(['fecha', 'sede_id', 'sede_nombre', 'total_efectivo', 'total_tc', 'total_td', 'total_ventas'])
+    writer.writerow([
+        'fecha', 'sede_id', 'sede_nombre',
+        'total_efectivo', 'total_tc', 'total_td', 'total_ventas'
+    ])
 
     current_row = []
     last_date = None
@@ -384,9 +525,17 @@ def reporte_financiero_csv():
 @orders_bp.route('/optimizar-cola', methods=['POST'])
 @admin_local_or_global_required
 def optimizar_cola_pedidos():
-    """
+    """Optimiza la cola de pedidos usando el algoritmo de la mochila.
+
     Recibe una sede y capacidad máxima de items.
     Retorna qué pedidos procesar primero para maximizar revenue.
+
+    Args:
+        None (datos en JSON: sede_id, capacidad_items).
+
+    Returns:
+        Dict con pedidos_seleccionados, items_total, beneficio_total,
+        pedidos_omitidos y total_pedidos_pendientes.
     """
     data = request.get_json()
     sede_id = data.get('sede_id')
@@ -397,15 +546,15 @@ def optimizar_cola_pedidos():
     if not capacidad:
         return jsonify({'mensaje': 'Capacidad debe ser un número entero positivo'}), 400
 
-    # Obtener pedidos pendientes de pago en esta sede
+    # Obtener pedidos pendientes de pago en esta sede.
     pedidos_pendientes = db.session.query(
         Pedido.id,
         Pedido.total,
         Pedido.fecha_creacion
-    ).join(Mesa, Pedido.mesa_id == Mesa.id)\
-     .filter(Mesa.sede_id == sede_id)\
-     .filter(Pedido.estado == 'PENDIENTE_PAGO')\
-     .order_by(Pedido.fecha_creacion.asc()).all()
+    ).join(Mesa, Pedido.mesa_id == Mesa.id).filter(
+        Mesa.sede_id == sede_id,
+        Pedido.estado == 'PENDIENTE_PAGO'
+    ).order_by(Pedido.fecha_creacion.asc()).all()
 
     if not pedidos_pendientes:
         return jsonify({
@@ -415,7 +564,7 @@ def optimizar_cola_pedidos():
             'beneficio_total': 0
         }), 200
 
-    # Calcular cantidad de items por pedido desde DetallePedido
+    # Calcular cantidad de items por pedido desde DetallePedido.
     pedidos_data = []
     for p in pedidos_pendientes:
         detalles = DetallePedido.query.filter_by(pedido_id=p.id).all()
@@ -423,16 +572,19 @@ def optimizar_cola_pedidos():
 
         pedidos_data.append({
             'id': p.id,
-            'cantidad_items': cantidad_items if cantidad_items > 0 else 1,  # mínimo 1
+            'cantidad_items': cantidad_items if cantidad_items > 0 else 1,
             'total': float(p.total) if p.total else 0
         })
 
-    # Ejecutar algoritmo de la mochila
+    # Ejecutar algoritmo de la mochila.
     resultado = resolver_mochila_pedidos(pedidos_data, capacidad)
 
-    # Obtener IDs de pedidos no seleccionados
+    # Obtener IDs de pedidos no seleccionados.
     todos_los_ids = [p['id'] for p in pedidos_data]
-    pedidos_omitidos = [pid for pid in todos_los_ids if pid not in resultado['pedidos_seleccionados']]
+    pedidos_omitidos = [
+        pid for pid in todos_los_ids
+        if pid not in resultado['pedidos_seleccionados']
+    ]
 
     return jsonify({
         'sede_id': sede_id,

@@ -1,3 +1,8 @@
+"""Aplicación Flask del servicio de pedidos.
+
+Punto de entrada para el microservicio de gestión de pedidos, mesas y pagos.
+"""
+
 from flask import Flask
 from config import Config
 from models.orders_model import db
@@ -10,5 +15,5 @@ db.init_app(app)
 app.register_blueprint(orders_bp)
 
 if __name__ == '__main__':
-    # Microservicio corre en el puerto 5004
+    # Microservicio corre en el puerto 5004.
     app.run(host='0.0.0.0', port=5004, debug=True)
