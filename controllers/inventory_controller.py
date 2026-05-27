@@ -10,6 +10,50 @@ from flask import current_app
 
 inventory_bp = Blueprint('inventory_bp', __name__, url_prefix='/api/inventario')
 
+
+# ====================================================================
+# ALGORITMO MERGE SORT - FUSIÓN DE DATOS ORDENADOS
+# ====================================================================
+def merge_sort(datos, key=lambda x: x):
+    """
+    Implementación de Merge Sort para ordenar listas.
+    Divide la lista en mitades, ordena recursivamente y fusiona.
+    """
+    if len(datos) <= 1:
+        return datos
+
+    mid = len(datos) // 2
+    left = merge_sort(datos[:mid], key)
+    right = merge_sort(datos[mid:], key)
+
+    return merge(left, right, key)
+
+
+def merge(left, right, key):
+    """Fusiona dos listas ordenadas en una sola ordenada"""
+    resultado = []
+    i = j = 0
+
+    while i < len(left) and j < len(right):
+        if key(left[i]) <= key(right[j]):
+            resultado.append(left[i])
+            i += 1
+        else:
+            resultado.append(right[j])
+            j += 1
+
+    resultado.extend(left[i:])
+    resultado.extend(right[j:])
+    return resultado
+
+
+def fusionar_listas_ordenadas(lista1, lista2, key):
+    """
+    Fusiona dos listas ordenadas usando Merge Sort.
+    Útil para combinar datos de múltiples fuentes ordenadas.
+    """
+    return merge(lista1, lista2, key)
+
 # Función auxiliar para extraer el usuario_id del token (para el historial)
 def get_user_from_token(req):
     token = req.headers['Authorization'].split(" ")[1]
