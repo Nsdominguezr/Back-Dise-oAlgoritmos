@@ -1,3 +1,8 @@
+"""Aplicación Flask del servicio de inventario.
+
+Punto de entrada para el microservicio de gestión de stock e inventario.
+"""
+
 from flask import Flask
 from config import Config
 from models.inventory_model import db
@@ -13,5 +18,5 @@ ma.init_app(app)
 app.register_blueprint(inventory_bp)
 
 if __name__ == '__main__':
-    # Microservicio de inventario en puerto aislado
+    # Microservicio de inventario en puerto aislado.
     app.run(host='0.0.0.0', port=5003, debug=True)
