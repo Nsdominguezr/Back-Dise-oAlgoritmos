@@ -172,63 +172,87 @@ def reporte_inventario_csv():
 
 
 # ====================================================================
-# ALGORITMO VORAZ: REDISTRIBUCIÓN DE STOCK ENTRE SEDES
+# ALGORITMO VORAZ: REDISTRIBUCIÓN DE STOCK ENTRE SEDES (RECURSIVO)
 # ====================================================================
-def calcular_redistribucion_stock(stock_disponible, sedes):
+def calcular_redistribucion_stock(stock_disponible, sedes, indice=0, distribucion=None, sedes_sin_asignar=None):
     """
     Algoritmo voraz para distribuir stock disponible entre sedes.
-    Ordena sedes por capacidad_maxima (mayor primero) y asigna lo máximo posible.
+    Versión RECURSIVA - Ordena sedes por capacidad_maxima (mayor primero)
+    y asigna lo máximo posible.
 
     Args:
         stock_disponible: Cantidad total de stock a distribuir
         sedes: Lista de dicts [{sede_id, nombre, capacidad_maxima}, ...]
+        indice: Índice actual de procesamiento (recursión)
+        distribucion: Acumulador de resultados (parámetro interno)
+        sedes_sin_asignar: Lista de sedes sin asignación (parámetro interno)
 
     Returns:
         dict con distribución calculada (SIN modificar BD)
     """
-    if not sedes or stock_disponible <= 0:
+    # Inicializar acumuladores en la primera llamada
+    if distribucion is None:
+        distribucion = []
+    if sedes_sin_asignar is None:
+        sedes_sin_asignar = []
+
+    # Guardar stock original solo en la primera llamada
+    if indice == 0:
+        calcular_redistribucion_stock._stock_original = stock_disponible
+
+    # Ordenar sedes una sola vez al inicio
+    if not hasattr(calcular_redistribucion_stock, '_sedes_ordenadas'):
+        calcular_redistribucion_stock._sedes_ordenadas = sorted(sedes, key=lambda x: x['capacidad_maxima'], reverse=True)
+
+    sedes_ordenadas = calcular_redistribucion_stock._sedes_ordenadas
+    stock_original = getattr(calcular_redistribucion_stock, '_stock_original', stock_disponible)
+
+    # Caso base: no hay más sedes
+    if indice >= len(sedes_ordenadas):
+        if hasattr(calcular_redistribucion_stock, '_sedes_ordenadas'):
+            delattr(calcular_redistribucion_stock, '_sedes_ordenadas')
+        if hasattr(calcular_redistribucion_stock, '_stock_original'):
+            delattr(calcular_redistribucion_stock, '_stock_original')
+
+        # Calcular stock sobrante (original - suma de asignados)
+        total_asignado = sum(d['asignado'] for d in distribucion)
+        stock_sobrante = stock_original - total_asignado
+
         return {
-            "stock_total": stock_disponible,
-            "distribucion": [],
-            "stock_sobrante": stock_disponible,
-            "sedes_sin_asignar": []
+            "stock_total": stock_original,
+            "distribucion": distribucion,
+            "stock_sobrante": stock_sobrante,
+            "sedes_sin_asignar": sedes_sin_asignar
         }
 
-    # Ordenar sedes por capacidad (mayor primero) - algoritmo voraz
-    sedes_ordenadas = sorted(sedes, key=lambda x: x['capacidad_maxima'], reverse=True)
+    sede = sedes_ordenadas[indice]
 
-    distribucion = []
-    restante = stock_disponible
-    sedes_sin_asignar = []
+    if stock_disponible <= 0:
+        # No hay stock - marcar esta sede con 0 asignado
+        sedes_sin_asignar.append(sede['sede_id'])
+        distribucion.append({
+            "sede_id": sede['sede_id'],
+            "nombre": sede['nombre'],
+            "asignado": 0,
+            "restante_capacidad": sede['capacidad_maxima']
+        })
+        # Continuar recursión para procesar las demás sedes
+        return calcular_redistribucion_stock(0, sedes, indice + 1, distribucion, sedes_sin_asignar)
 
-    for sede in sedes_ordenadas:
-        if restante <= 0:
-            # No hay stock para esta sede
-            sedes_sin_asignar.append(sede['sede_id'])
-            distribucion.append({
-                "sede_id": sede['sede_id'],
-                "nombre": sede['nombre'],
-                "asignado": 0,
-                "restante_capacidad": sede['capacidad_maxima']
-            })
-        else:
-            # Asignar lo máximo posible (greedy: tomar la mayor capacidad disponible)
-            asignado = min(restante, sede['capacidad_maxima'])
-            restante -= asignado
+    # Caso donde SÍ hay stock disponible para esta sede
+    # Asignar lo máximo posible (greedy: tomar la mayor capacidad disponible)
+    asignado = min(stock_disponible, sede['capacidad_maxima'])
+    restante = stock_disponible - asignado
 
-            distribucion.append({
-                "sede_id": sede['sede_id'],
-                "nombre": sede['nombre'],
-                "asignado": asignado,
-                "restante_capacidad": sede['capacidad_maxima'] - asignado
-            })
+    distribucion.append({
+        "sede_id": sede['sede_id'],
+        "nombre": sede['nombre'],
+        "asignado": asignado,
+        "restante_capacidad": sede['capacidad_maxima'] - asignado
+    })
 
-    return {
-        "stock_total": stock_disponible,
-        "distribucion": distribucion,
-        "stock_sobrante": restante,
-        "sedes_sin_asignar": sedes_sin_asignar
-    }
+    # Llamada recursiva con siguiente sede y stock restante
+    return calcular_redistribucion_stock(restante, sedes, indice + 1, distribucion, sedes_sin_asignar)
 
 
 # ====================================================================
