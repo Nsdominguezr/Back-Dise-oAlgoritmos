@@ -1,7 +1,7 @@
 from flask import Blueprint, request, jsonify, current_app, make_response
 from models.user_model import db, Usuario, Rol
 from dto.user_dto import usuario_dto, usuarios_dto
-import bcrypt
+from utils.cifrado import encriptar, desencriptar
 import jwt
 import datetime
 from functools import wraps
@@ -61,14 +61,13 @@ def registrar_usuario():
     if not rol_existente:
         return jsonify({'mensaje': 'Rol inválido.'}), 400
 
-    hashed_pw = bcrypt.hashpw(data['password'].encode('utf-8'), bcrypt.gensalt())
+    hashed_pw = encriptar(data['password'])
 
     nuevo_usuario = Usuario(
         username=data['username'],
-        password_hash=hashed_pw.decode('utf-8'),
+        password_hash=hashed_pw,
         rol_id=data['rol_id'],
         sede_id=data['sede_id']
-        # El campo 'activo' se pone en True por defecto gracias al modelo
     )
 
     try:
@@ -97,9 +96,11 @@ def login():
     if not usuario.activo:
         return jsonify({'mensaje': 'Cuenta suspendida o inactiva. Contacte al administrador.'}), 403
 
-    password_ingresada = data['password'].encode('utf-8')
-    password_guardada = usuario.password_hash.encode('utf-8')
-    password_valida = bcrypt.checkpw(password_ingresada, password_guardada)
+    password_ingresada = data['password']
+    password_guardada = usuario.password_hash
+    # Desencriptamos el password almacenado y lo comparamos con el ingresado
+    password_original = desencriptar(password_guardada)
+    password_valida = password_original == password_ingresada
     
     if password_valida:
         fecha_expiracion_access = datetime.datetime.utcnow() + datetime.timedelta(minutes=20)
