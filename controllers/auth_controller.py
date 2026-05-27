@@ -1,10 +1,13 @@
-from flask import Blueprint, request, jsonify, current_app
-from models.user_model import db, Usuario, Rol 
+from flask import Blueprint, request, jsonify, current_app, make_response
+from models.user_model import db, Usuario, Rol
 from dto.user_dto import usuario_dto, usuarios_dto
 import bcrypt
 import jwt
 import datetime
-from functools import wraps 
+from functools import wraps
+import requests
+import io
+import csv
 
 auth_bp = Blueprint('auth_bp', __name__, url_prefix='/api/auth')
 
@@ -192,3 +195,44 @@ def desactivar_usuario(usuario_id):
     db.session.commit()
     
     return jsonify({'mensaje': f'El usuario {usuario.username} ha sido dado de baja. Se ha revocado su acceso.'}), 200
+
+
+# ====================================================================
+# REPORTES CSV - ENDPOINTS UNIFICADOS PARA ADMIN GLOBAL
+# ====================================================================
+@auth_bp.route('/reportes/<string:tipo>', methods=['GET'])
+@admin_global_required
+def get_reporte(tipo):
+    """Orchestra la descarga de reportes desde los microservicios correspondientes"""
+    token = request.headers.get('Authorization')
+
+    if tipo == 'inventario':
+        # Llamar al microservicio de inventario
+        url = f"{current_app.config['INVENTORY_SERVICE_URL']}/reportes/inventario"
+        headers = {'Authorization': token}
+        resp = requests.get(url, headers=headers)
+
+        if resp.status_code != 200:
+            return jsonify({'mensaje': 'Error generando reporte de inventario'}), 500
+
+        response = make_response(resp.content)
+        response.headers['Content-Type'] = 'text/csv'
+        response.headers['Content-Disposition'] = 'attachment; filename=reporte_inventario.csv'
+        return response
+
+    elif tipo == 'financiero':
+        # Llamar al microservicio de pedidos
+        url = f"{current_app.config['ORDERS_SERVICE_URL']}/reportes/financiero"
+        headers = {'Authorization': token}
+        resp = requests.get(url, headers=headers)
+
+        if resp.status_code != 200:
+            return jsonify({'mensaje': 'Error generando reporte financiero'}), 500
+
+        response = make_response(resp.content)
+        response.headers['Content-Type'] = 'text/csv'
+        response.headers['Content-Disposition'] = 'attachment; filename=reporte_financiero.csv'
+        return response
+
+    else:
+        return jsonify({'mensaje': 'Tipo de reporte no válido. Opciones: inventario, financiero'}), 400
