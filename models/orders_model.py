@@ -46,6 +46,7 @@ class Pedido(db.Model):
     )
     total = db.Column(db.Numeric(10, 2), default=0.00)
     fecha_creacion = db.Column(db.DateTime, default=datetime.utcnow)
+    ultima_actividad = db.Column(db.DateTime, default=datetime.utcnow)
 
     mesa_ref = db.relationship('Mesa', backref='pedidos', lazy=True)
 

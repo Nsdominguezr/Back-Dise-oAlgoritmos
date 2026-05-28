@@ -3,6 +3,7 @@ Módulo de controlador de pedidos.
 Gestiona las operaciones de pedidos, mesas, caja y pagos.
 """
 
+from datetime import datetime, timedelta
 from flask import Blueprint, request, jsonify, current_app, make_response
 from models.orders_model import db, Mesa, Pedido, DetallePedido, Pago
 import requests
@@ -218,6 +219,7 @@ def agregar_item(pedido_id):
         precio_unitario=data['precio_unitario']
     )
     pedido.total += (int(data['cantidad']) * Decimal(str(data['precio_unitario'])))
+    pedido.ultima_actividad = datetime.utcnow()
     db.session.add(nuevo_detalle)
     db.session.commit()
     return jsonify({'mensaje': 'Producto agregado', 'nuevo_total': float(pedido.total)}), 200
@@ -242,6 +244,7 @@ def pasar_a_caja(pedido_id):
         return jsonify({'mensaje': 'El pedido no se puede congelar'}), 400
 
     pedido.estado = 'PENDIENTE_PAGO'
+    pedido.ultima_actividad = datetime.utcnow()
     db.session.commit()
     return jsonify({'mensaje': 'Pedido enviado a caja. Edición bloqueada.'}), 200
 
@@ -594,4 +597,46 @@ def optimizar_cola_pedidos():
         'beneficio_total': resultado['beneficio_total'],
         'pedidos_omitidos': pedidos_omitidos,
         'total_pedidos_pendientes': len(pedidos_data)
+    }), 200
+
+
+# ====================================================================
+# JOB: LIBERAR MESAS ABANDONADAS
+# ====================================================================
+@orders_bp.route('/limpiar-mesas-abandonadas', methods=['POST'])
+@admin_local_or_global_required
+def limpiar_mesas_abandonadas():
+    """Libera mesas con pedidos en estado ABIERTO sin actividad reciente.
+
+    Args:
+        minutos_inactividad: Minutos sin actividad para considerar abandonado.
+
+    Returns:
+        Mensaje con cantidad de mesas liberadas.
+    """
+    data = request.get_json()
+    minutos_inactividad = data.get('minutos_inactividad', 30)
+
+    if not isinstance(minutos_inactividad, int) or minutos_inactividad <= 0:
+        return jsonify({'mensaje': 'minutos_inactividad debe ser un entero positivo'}), 400
+
+    limite = datetime.utcnow() - timedelta(minutes=minutos_inactividad)
+
+    pedidos_abandonados = Pedido.query.filter(
+        Pedido.estado == 'ABIERTO',
+        Pedido.ultima_actividad < limite
+    ).all()
+
+    count = 0
+    for pedido in pedidos_abandonados:
+        mesa = Mesa.query.get(pedido.mesa_id)
+        if mesa and mesa.estado == 'OCUPADA':
+            mesa.estado = 'LIBRE'
+        pedido.estado = 'CANCELADO'
+        db.session.commit()
+        count += 1
+
+    return jsonify({
+        'mensaje': f'Se liberaron {count} mesas abandonadas',
+        'mesas_liberadas': count
     }), 200
