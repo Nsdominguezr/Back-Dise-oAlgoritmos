@@ -249,6 +249,41 @@ def pasar_a_caja(pedido_id):
     return jsonify({'mensaje': 'Pedido enviado a caja. Edición bloqueada.'}), 200
 
 
+@orders_bp.route('/<int:pedido_id>', methods=['GET'])
+@token_required
+def get_pedido(pedido_id):
+    """Obtiene el detalle de un pedido.
+
+    Args:
+        pedido_id: ID del pedido.
+
+    Returns:
+        Detalle del pedido con sus items o error.
+    """
+    pedido = Pedido.query.get(pedido_id)
+    if not pedido:
+        return jsonify({'mensaje': 'Pedido no encontrado'}), 404
+
+    detalles = DetallePedido.query.filter_by(pedido_id=pedido.id).all()
+    detalles_list = [
+        {
+            'producto_id': d.producto_id,
+            'cantidad': d.cantidad,
+            'precio_unitario': float(d.precio_unitario)
+        }
+        for d in detalles
+    ]
+
+    return jsonify({
+        'id': pedido.id,
+        'mesa_id': pedido.mesa_id,
+        'estado': pedido.estado,
+        'total': float(pedido.total),
+        'fecha_creacion': pedido.fecha_creacion.strftime('%Y-%m-%d %H:%M:%S'),
+        'detalles': detalles_list
+    }), 200
+
+
 @orders_bp.route('/<int:pedido_id>/checkout', methods=['POST'])
 @token_required
 def procesar_checkout(pedido_id):
