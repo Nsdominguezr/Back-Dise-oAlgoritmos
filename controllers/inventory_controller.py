@@ -109,16 +109,72 @@ def get_user_from_token(req):
 @inventory_bp.route('/sede/<int:sede_id>', methods=['GET'])
 @token_required
 def get_stock_sede(sede_id):
-    """Vista de stock por sede.
+    """Vista de stock por sede con paginación.
 
     Args:
         sede_id: ID de la sede a consultar.
+        page: Número de página (default: 1).
+        per_page: Registros por página (default: 10).
 
     Returns:
-        Lista de inventarios con historial de movimientos.
+        Lista de inventarios con historial de movimientos y metadatos de paginación.
     """
-    stock = Inventario.query.filter_by(sede_id=sede_id).all()
-    return jsonify(inventarios_dto.dump(stock)), 200
+    page = request.args.get('page', 1, type=int)
+    per_page = request.args.get('per_page', 10, type=int)
+
+    pagination = Inventario.query.filter_by(sede_id=sede_id).paginate(
+        page=page, per_page=per_page, error_out=False
+    )
+
+    return jsonify({
+        'data': inventarios_dto.dump(pagination.items),
+        'meta': {
+            'current_page': pagination.page,
+            'last_page': pagination.pages,
+            'per_page': pagination.per_page,
+            'total': pagination.total
+        }
+    }), 200
+
+
+@inventory_bp.route('/sede/<int:sede_id>/movimientos', methods=['GET'])
+@token_required
+def get_movimientos_sede(sede_id):
+    """Vista de movimientos por sede con paginación.
+
+    Args:
+        sede_id: ID de la sede a consultar.
+        page: Número de página (default: 1).
+        per_page: Registros por página (default: 10).
+
+    Returns:
+        Lista de movimientos con metadatos de paginación.
+    """
+    page = request.args.get('page', 1, type=int)
+    per_page = request.args.get('per_page', 10, type=int)
+
+    # Obtener los inventarios de la sede
+    inventarios_sede = db.session.query(Inventario.id).filter_by(sede_id=sede_id).subquery()
+
+    # Paginar los movimientos de esos inventarios
+    pagination = MovimientoInventario.query.filter(
+        MovimientoInventario.inventario_id.in_(inventarios_sede)
+    ).order_by(MovimientoInventario.fecha.desc()).paginate(
+        page=page, per_page=per_page, error_out=False
+    )
+
+    from dto.inventory_dto import MovimientoDTO
+    movimiento_dto = MovimientoDTO()
+
+    return jsonify({
+        'data': [movimiento_dto.dump(m) for m in pagination.items],
+        'meta': {
+            'current_page': pagination.page,
+            'last_page': pagination.pages,
+            'per_page': pagination.per_page,
+            'total': pagination.total
+        }
+    }), 200
 
 
 @inventory_bp.route('/movimiento', methods=['POST'])
